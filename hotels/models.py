@@ -122,3 +122,30 @@ class Booking(models.Model):
 
     def __str__(self):
         return f"{self.user} - {self.hotel.name} ({self.rooms_booked} rooms, {self.number_of_guests} guests)"
+
+class Review(models.Model):
+    """Star rating + comment left by user after a completed hotel booking"""
+    booking = models.OneToOneField(
+        Booking,
+        on_delete=models.CASCADE,
+        related_name='review'
+    )
+    hotel = models.ForeignKey(
+        HotelDataModel,
+        on_delete=models.CASCADE,
+        related_name='reviews'
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='hotel_reviews'
+    )
+    rating = models.PositiveSmallIntegerField(default=5, help_text="Rating from 1 to 5")
+    comment = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.user} → {self.hotel.name} ({self.rating}⭐)"
+
+    class Meta:
+        ordering = ['-created_at']

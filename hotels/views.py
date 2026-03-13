@@ -6,7 +6,7 @@ from rest_framework.generics import ListAPIView
 from rest_framework.decorators import action
 from rest_framework import status
 
-from .models import HotelDataModel, Booking, Room, HotelGallery, NearbyAttraction # Import Booking, NearbyAttraction
+from .models import HotelDataModel, Booking, Room, HotelGallery, NearbyAttraction, Review # Import Review
 from django.db.models import Q, Sum
 from .serializers import (
     HotelCreateSerializer, 
@@ -15,6 +15,7 @@ from .serializers import (
     RoomSerializer,
     HotelGallerySerializer,
     NearbyAttractionSerializer,
+    ReviewSerializer,
 )
 
 class HotelListAPIView(ListAPIView):
@@ -32,7 +33,7 @@ class HotelViewSet(ModelViewSet):
     permission_classes = [IsAuthenticatedOrReadOnly]
 
     def get_serializer_class(self):
-        if self.request.method == "POST":
+        if self.request.method in ["POST", "PUT", "PATCH"]:
             return HotelCreateSerializer
         return HotelListSerializer
 
@@ -65,6 +66,26 @@ class BookingViewSet(ModelViewSet):
     def perform_create(self, serializer):
         # The serializer.validate() we wrote earlier handles the availability check!
         serializer.save(user=self.request.user)
+
+    @action(detail=False, methods=['get'])
+    def eligible_for_review(self, request):
+        hotel_id = request.query_params.get('hotel_id')
+        if not hotel_id:
+            return Response({"error": "hotel_id is required"}, status=400)
+        
+        # Find latest completed/confirmed booking for this user/hotel that has no review
+        booking = Booking.objects.filter(
+            user=request.user,
+            hotel_id=hotel_id,
+            status__in=['confirmed', 'paid', 'completed']
+        ).exclude(review__isnull=False).order_by('-created_at').first()
+
+        if booking:
+            return Response({
+                "id": booking.id,
+                "room_type": booking.room_type_name
+            })
+        return Response({"id": None})
 
     # Optional: Custom action to check availability without booking
     @action(detail=False, methods=['get'], permission_classes=[AllowAny])
@@ -174,3 +195,29 @@ class NearbyAttractionViewSet(ModelViewSet):
         if hotel_id:
             queryset = queryset.filter(hotel_id=hotel_id)
         return queryset
+
+class ReviewViewSet(ModelViewSet):
+    """
+    ViewSet for handling hotel reviews.
+    POST: Create a review (requires completed booking)
+    GET: List reviews (can filter by hotel)
+    PATCH/PUT: Update owned review
+    DELETE: Delete owned review
+    """
+    queryset = Review.objects.all()
+    serializer_class = ReviewSerializer
+
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            return [IsAuthenticated()]
+        return [AllowAny()]
+
+    def get_queryset(self):
+        queryset = Review.objects.all().order_by('-created_at')
+        hotel_id = self.request.query_params.get('hotel')
+        if hotel_id:
+            queryset = queryset.filter(hotel_id=hotel_id)
+        return queryset
+
+    def get_serializer_context(self):
+        return {'request': self.request}

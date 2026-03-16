@@ -6,7 +6,7 @@ from rest_framework.generics import ListAPIView
 from rest_framework.decorators import action
 from rest_framework import status
 
-from .models import HotelDataModel, Booking, Room, HotelGallery, NearbyAttraction # Import Booking, NearbyAttraction
+from .models import HotelDataModel, Booking, Room, HotelGallery, NearbyAttraction, HotelReview # Import HotelReview
 from django.db.models import Q, Sum
 from .serializers import (
     HotelCreateSerializer, 
@@ -15,6 +15,7 @@ from .serializers import (
     RoomSerializer,
     HotelGallerySerializer,
     NearbyAttractionSerializer,
+    HotelReviewSerializer,
 )
 
 class HotelListAPIView(ListAPIView):
@@ -111,6 +112,26 @@ class BookingViewSet(ModelViewSet):
         else:
              return Response({"available": False, "message": "Room is full", "remaining_rooms": 0})
     
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def eligible_for_review(self, request):
+        hotel_id = request.query_params.get('hotel_id')
+        if not hotel_id:
+            return Response({"error": "Missing hotel_id"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check for confirmed/completed booking for this user and hotel
+        booking = Booking.objects.filter(
+            user=request.user, 
+            hotel_id=hotel_id, 
+            status__in=['confirmed', 'completed']
+        ).first()
+        
+        if booking:
+            # Also check if they ALREADY left a review
+            if hasattr(booking, 'review'):
+                return Response({"message": "Already reviewed"}, status=status.HTTP_200_OK)
+            return Response({"id": booking.id})
+        return Response({"message": "No eligible booking found"}, status=status.HTTP_200_OK)
+    
 
 class HotelDashboardView(APIView):
     permission_classes = [IsAuthenticated]
@@ -174,3 +195,17 @@ class NearbyAttractionViewSet(ModelViewSet):
         if hotel_id:
             queryset = queryset.filter(hotel_id=hotel_id)
         return queryset
+
+class HotelReviewViewSet(ModelViewSet):
+    serializer_class = HotelReviewSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+
+    def get_queryset(self):
+        queryset = HotelReview.objects.all()
+        hotel_id = self.request.query_params.get('hotel')
+        if hotel_id:
+            queryset = queryset.filter(hotel_id=hotel_id)
+        return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)

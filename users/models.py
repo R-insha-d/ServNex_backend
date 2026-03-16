@@ -40,12 +40,12 @@ class User(AbstractUser):
     username=models.CharField(max_length=200, null=True, blank=True)
     role=models.CharField(max_length=20,choices=role_options,default="User")
     profile_image=models.ImageField(upload_to='profiles/', null=True, blank=True)
-    # is_verified=models.BooleanField(default=True)
-    # otp=models.CharField(max_length=10,null=True,blank=True)
-    # def generate_otp(self):
-    #     otp_number=str(randint(1000,9000))+str(self.id)
-    #     self.otp=otp_number
-    #     self.save()
+    is_verified=models.BooleanField(default=True)
+    otp=models.CharField(max_length=10,null=True,blank=True)
+    def generate_otp(self):
+        otp_number=str(randint(1000,9000))+str(self.id)
+        self.otp=otp_number
+        self.save()
 
     objects=CustomUserManager()
 
@@ -68,3 +68,15 @@ class PasswordResetOTP(models.Model):
 
     def __str__(self):
         return f"{self.user} - {self.otp}"
+
+class PendingUser(models.Model):
+    first_name = models.CharField(max_length=255)
+    email = models.EmailField(unique=True)
+    password = models.CharField(max_length=255)
+    phone = models.CharField(max_length=15)
+    role = models.CharField(max_length=20, default="User")
+    otp = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.email

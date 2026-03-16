@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import HotelDataModel, Booking, Room, HotelGallery, NearbyAttraction  # Import Booking, Room, HotelGallery, NearbyAttraction
+from .models import HotelDataModel, Booking, Room, HotelGallery, NearbyAttraction, HotelReview  # Import HotelReview
 from django.contrib.auth import get_user_model
 from django.db.models import Q, Sum
 
@@ -40,6 +40,9 @@ class HotelListSerializer(serializers.ModelSerializer):
     room_image2 = serializers.SerializerMethodField()
     environment_image = serializers.SerializerMethodField()
     nearby_attractions = NearbyAttractionSerializer(many=True, read_only=True)
+    average_rating = serializers.SerializerMethodField()
+    reviews_count = serializers.SerializerMethodField()
+
 
     class Meta:
         model = HotelDataModel
@@ -59,6 +62,8 @@ class HotelListSerializer(serializers.ModelSerializer):
             'room_image2',
             'environment_image',
             'nearby_attractions',
+            'average_rating',
+            'reviews_count',
         ]
     
     def get_amenities(self, obj):
@@ -90,6 +95,14 @@ class HotelListSerializer(serializers.ModelSerializer):
         if obj.environment_image and request:
             return request.build_absolute_uri(obj.environment_image.url)
         return None
+
+    def get_average_rating(self, obj):
+        from django.db.models import Avg
+        avg = obj.reviews.aggregate(Avg('rating'))['rating__avg']
+        return round(float(avg), 1) if avg else 0
+
+    def get_reviews_count(self, obj):
+        return obj.reviews.count()
 
 
 # [NEW] Serializer for Booking
@@ -172,3 +185,11 @@ class HotelGallerySerializer(serializers.ModelSerializer):
     class Meta:
         model = HotelGallery
         fields = '__all__'
+
+class HotelReviewSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source="user.username", read_only=True)
+    
+    class Meta:
+        model = HotelReview
+        fields = ['id', 'booking', 'hotel', 'user', 'user_name', 'rating', 'comment', 'created_at']
+        read_only_fields = ['user']

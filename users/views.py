@@ -1,14 +1,15 @@
+from django.shortcuts import render, redirect
 from rest_framework import viewsets, permissions, status, parsers
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
-from django.conf import settings  # ← Add this import
+from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken
 import random
 
-from .models import PasswordResetOTP
+from .models import PasswordResetOTP, PendingUser
 from .serializers import (
     SendOTPSerializer,
     VerifyOTPSerializer,
@@ -21,29 +22,150 @@ from .serializers import (
 
 User = get_user_model()
 
+def send_otp(user_instance):
+    user_instance.generate_otp()
+
+    send_mail(
+        subject='Django App Authentication - otp',
+        message=f'Your Generated OTP is : {user_instance.otp}',
+        from_email='anuttananugrah@gmail.com',
+        recipient_list=[user_instance.email],
+        fail_silently=True
+
+    )
+
 class RegisterViewset(viewsets.ViewSet):
     permission_classes = [permissions.AllowAny]
-
+    
     def create(self, request):
         serializer = RegisterSerializer(data=request.data)
-
         if serializer.is_valid():
-            user_obj = serializer.save()
-            refresh = RefreshToken.for_user(user_obj)
-            return Response(
-                {
-                    "message": "User registered successfully",
-                    "user": serializer.data,
-                    "access": str(refresh.access_token),
-                    "refresh": str(refresh)
-                },
-                status=status.HTTP_201_CREATED
+            # Store data in PendingUser
+            email = serializer.validated_data.get('email')
+            otp = str(random.randint(1000, 9999))
+            
+            # Create or update pending user
+            PendingUser.objects.update_or_create(
+                email=email,
+                defaults={
+                    'first_name': serializer.validated_data.get('first_name'),
+                    'password': request.data.get('password'),
+                    'phone': serializer.validated_data.get('phone'),
+                    'role': serializer.validated_data.get('role') or (request.data.get('account_type') == 'business' and 'Business') or 'User',
+                    'otp': otp
+                }
             )
+            
+            # Use send_mail directly or update send_otp function
+            send_mail(
+                subject='Sign Up Verification - OTP',
+                message=f'Your Verification OTP is : {otp}',
+                from_email=settings.EMAIL_HOST_USER,
+                recipient_list=[email],
+                fail_silently=True
+            )
+            
+            return Response({"message": "OTP sent to email. Please verify.", "redirect": "otpverify"}, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+class OtpVerificationView(APIView):
+    permission_classes = [permissions.AllowAny]
 
-        return Response(
-            serializer.errors,
-            status=status.HTTP_400_BAD_REQUEST
-        )
+    def post(self, request):
+        otp_received = request.data.get('otp') or request.data.get('otpnum')
+        email = request.data.get('email')
+
+        if not email or not otp_received:
+            return Response({"error": "Email and OTP are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            pending_user = PendingUser.objects.get(email=email, otp=otp_received)
+            
+            # Create the actual user
+            user = User.objects.create_user(
+                first_name=pending_user.first_name,
+                email=pending_user.email,
+                password=pending_user.password,
+                phone=pending_user.phone,
+                role=pending_user.role
+            )
+            user.is_active = True
+            user.is_verified = True
+            user.save()
+            
+            # Delete pending user
+            pending_user.delete()
+            
+            # Send success email
+            send_mail(
+                subject='Account Verified Successfully',
+                message=f'Dear {user.first_name}, your account has been successfully verified. You can now login to ServNex.',
+                from_email=settings.EMAIL_HOST_USER,
+                recipient_list=[user.email],
+                fail_silently=True
+            )
+            
+            refresh = RefreshToken.for_user(user)
+            return Response({
+                "message": "User registered successfully",
+                "user": {
+                    "id": user.id,
+                    "first_name": user.first_name,
+                    "email": user.email,
+                    "role": user.role,
+                },
+                "access": str(refresh.access_token),
+                "refresh": str(refresh)
+            }, status=status.HTTP_201_CREATED)
+            
+        except PendingUser.DoesNotExist:
+            return Response({"error": "Invalid OTP or Email"}, status=status.HTTP_400_BAD_REQUEST)
+
+class ResendSignupOTPView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email')
+        if not email:
+            return Response({"error": "Email is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            pending_user = PendingUser.objects.get(email=email)
+            otp = str(random.randint(1000, 9999))
+            pending_user.otp = otp
+            pending_user.save()
+
+            send_mail(
+                subject='Sign Up Verification - New OTP',
+                message=f'Your New Verification OTP is : {otp}',
+                from_email=settings.EMAIL_HOST_USER,
+                recipient_list=[email],
+                fail_silently=True
+            )
+            return Response({"message": "New OTP sent to email."}, status=status.HTTP_200_OK)
+        except PendingUser.DoesNotExist:
+            return Response({"error": "No pending registration found for this email."}, status=status.HTTP_404_NOT_FOUND)
+        
+    # def create(self, request):
+    #     serializer = RegisterSerializer(data=request.data)
+
+    #     if serializer.is_valid():
+    #         user_obj = serializer.save()
+    #         refresh = RefreshToken.for_user(user_obj)
+    #         return Response(
+    #             {
+    #                 "message": "User registered successfully",
+    #                 "user": serializer.data,
+    #                 "access": str(refresh.access_token),
+    #                 "refresh": str(refresh)
+    #             },
+    #             status=status.HTTP_201_CREATED
+    #         )
+
+    #     return Response(
+    #         serializer.errors,
+    #         status=status.HTTP_400_BAD_REQUEST
+    #     )
 
 class LoginView(APIView):
     permission_classes = [AllowAny]

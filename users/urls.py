@@ -23,6 +23,8 @@ from users.views import (
     BusinessProfileView,
     UserProfileUpdateView,
     UserDeleteView,
+    OtpVerificationView,
+    ResendSignupOTPView,
 )
 
 router = DefaultRouter()
@@ -30,6 +32,8 @@ router.register('register', RegisterViewset, basename='register')
 
 urlpatterns = [
     path("login/", LoginView.as_view(), name="login"),
+    path("otp-verify/", OtpVerificationView.as_view(), name="otp-verify"),
+    path("resend-otp/", ResendSignupOTPView.as_view(), name="resend-otp"),
 
     # Forgot Password OTP
     path("forgot-password/send-otp/", SendOTPView.as_view()),

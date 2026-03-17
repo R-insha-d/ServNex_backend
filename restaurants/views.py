@@ -62,6 +62,24 @@ class UserReservationsView(generics.ListAPIView):
     def get_queryset(self):
         return TableReservation.objects.filter(user=self.request.user)
 
+class EligibleReservationView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        restaurant_id = request.query_params.get('restaurant_id')
+        if not restaurant_id:
+            return Response({"error": "restaurant_id is required"}, status=400)
+        
+        reservation = TableReservation.objects.filter(
+            user=request.user,
+            restaurant_id=restaurant_id,
+            status__in=['Your Table Is Ready', 'completed', 'paid']
+        ).exclude(review__isnull=False).order_by('-created_at').first()
+
+        if reservation:
+            return Response({"id": reservation.id})
+        return Response({"id": None})
+
 
 class RestaurantReservationDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = TableReservationSerializer

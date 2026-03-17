@@ -16,9 +16,21 @@ class RestaurantSerializer(serializers.ModelSerializer):
             'id', 'owner', 'owner_name', 'name', 'city', 'area', 'badge',
             'cuisine_type', 'price_range', 'average_cost_for_two', 'total_tables',
             'description', 'rating', 'image', 'menu_image', 'interior_image',
-            'created_at', 'updated_at'
+            'created_at', 'updated_at', 'reviews_count', 'average_rating',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'owner', 'owner_name']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'owner', 'owner_name', 'reviews_count', 'average_rating']
+
+    reviews_count = serializers.SerializerMethodField()
+    average_rating = serializers.SerializerMethodField()
+
+    def get_reviews_count(self, obj):
+        return obj.reviews.count()
+
+    def get_average_rating(self, obj):
+        ratings = obj.reviews.values_list('rating', flat=True)
+        if not ratings:
+            return float(obj.rating) if obj.rating else 0.0
+        return round(sum(ratings) / len(ratings), 1)
 
     def update(self, instance, validated_data):
         # Prevent deleting images if not sent
@@ -48,8 +60,8 @@ class ReviewSerializer(serializers.ModelSerializer):
     def validate(self, data):
         reservation = data.get('reservation')
         # Only allow review if reservation is completed
-        if reservation and reservation.status != 'completed':
-            raise serializers.ValidationError("You can only review a completed reservation.")
+        if reservation and reservation.status not in ['Your Table Is Ready', 'completed', 'paid']:
+            raise serializers.ValidationError("You can only review a confirmed or completed reservation.")
         # One review per reservation (only check on creation)
         if not self.instance and reservation and Review.objects.filter(reservation=reservation).exists():
             raise serializers.ValidationError("You have already reviewed this reservation.")

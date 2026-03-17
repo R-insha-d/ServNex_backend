@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import HotelDataModel, Booking, Room, HotelGallery, NearbyAttraction, HotelReview  # Import HotelReview
+from .models import HotelDataModel, Booking, Room, HotelGallery, NearbyAttraction, Review  # Import Review
 from django.contrib.auth import get_user_model
 from django.db.models import Q, Sum
 
@@ -112,8 +112,24 @@ class BookingSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Booking
-        fields = ['id', 'hotel', 'hotel_details', 'check_in', 'check_out', 'status', 'number_of_guests', 'rooms_booked', 'room', 'room_type_name', 'razorpay_order_id', 'payment_status']
-        read_only_fields = ['user', 'status', 'rooms_booked', 'room_type_name', 'razorpay_order_id', 'payment_status']
+        fields = ['id', 'hotel', 'hotel_details', 'check_in', 'check_out', 'status', 'number_of_guests', 'rooms_booked', 'room', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data']
+        read_only_fields = ['user', 'status', 'rooms_booked', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data']
+
+    has_review = serializers.SerializerMethodField()
+    review_data = serializers.SerializerMethodField()
+
+    def get_has_review(self, obj):
+        return hasattr(obj, 'review')
+
+    def get_review_data(self, obj):
+        if hasattr(obj, 'review'):
+            return {
+                'id': obj.review.id,
+                'rating': obj.review.rating,
+                'comment': obj.review.comment,
+                'created_at': obj.review.created_at,
+            }
+        return None
 
     def validate(self, data):
         """
@@ -186,10 +202,36 @@ class HotelGallerySerializer(serializers.ModelSerializer):
         model = HotelGallery
         fields = '__all__'
 
-class HotelReviewSerializer(serializers.ModelSerializer):
-    user_name = serializers.CharField(source="user.username", read_only=True)
-    
+class ReviewSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source='user.first_name', read_only=True)
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+
     class Meta:
-        model = HotelReview
-        fields = ['id', 'booking', 'hotel', 'user', 'user_name', 'rating', 'comment', 'created_at']
-        read_only_fields = ['user']
+        model = Review
+        fields = [
+            'id', 'booking', 'hotel', 'user', 'user_name',
+            'user_email', 'rating', 'comment', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'user', 'user_name', 'user_email', 'hotel']
+
+    def validate_rating(self, value):
+        if not 1 <= value <= 5:
+            raise serializers.ValidationError("Rating must be between 1 and 5.")
+        return value
+
+    def validate(self, data):
+        booking = data.get('booking')
+        # Only allow review if booking is completed
+        if booking and booking.status not in ['confirmed', 'paid', 'completed']:
+            raise serializers.ValidationError("You can only review a confirmed or completed booking.")
+        # One review per booking
+        if not self.instance and booking and Review.objects.filter(booking=booking).exists():
+            raise serializers.ValidationError("You have already reviewed this booking.")
+        return data
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        booking = validated_data['booking']
+        validated_data['user'] = request.user
+        validated_data['hotel'] = booking.hotel
+        return super().create(validated_data)

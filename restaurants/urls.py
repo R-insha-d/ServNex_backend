@@ -11,6 +11,7 @@ urlpatterns = [
     path('reservations/', TableReservationListCreateView.as_view(), name='reservation-list-create'),
     path('reservations/<int:pk>/', RestaurantReservationDetailView.as_view(), name='reservation-detail'),
     path('my-reservations/', UserReservationsView.as_view(), name='user-reservations'),
+    path('eligible-reservation/', EligibleReservationView.as_view(), name='eligible-reservation'),
     
     # Dashboard endpoints
     path('restaurant-dashboard/reservations/', RestaurantDashboardReservationsView.as_view()),

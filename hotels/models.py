@@ -123,8 +123,8 @@ class Booking(models.Model):
     def __str__(self):
         return f"{self.user} - {self.hotel.name} ({self.rooms_booked} rooms, {self.number_of_guests} guests)"
 
-class HotelReview(models.Model):
-    """Star rating + comment left by user after a completed booking"""
+class Review(models.Model):
+    """Star rating + comment left by user after a completed hotel booking"""
     booking = models.OneToOneField(
         Booking,
         on_delete=models.CASCADE,
@@ -148,4 +148,4 @@ class HotelReview(models.Model):
         return f"{self.user} → {self.hotel.name} ({self.rating}⭐)"
 
     class Meta:
-        ordering = ['-created_at']
+        ordering = ['-created_at']

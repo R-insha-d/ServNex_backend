@@ -113,7 +113,7 @@ class BookingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Booking
         fields = ['id', 'hotel', 'hotel_details', 'check_in', 'check_out', 'status', 'number_of_guests', 'rooms_booked', 'room', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data']
-        read_only_fields = ['user', 'status', 'rooms_booked', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data']
+        read_only_fields = ['user', 'status', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data']
 
     has_review = serializers.SerializerMethodField()
     review_data = serializers.SerializerMethodField()

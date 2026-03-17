@@ -98,6 +98,9 @@ class BookingViewSet(ModelViewSet):
         if not all([hotel_id, check_in, check_out]):
              return Response({"error": "Missing parameters"}, status=status.HTTP_400_BAD_REQUEST)
         
+        if check_in >= check_out:
+            return Response({"error": "Check-out date must be after check-in date."}, status=status.HTTP_400_BAD_REQUEST)
+        
         try:
              hotel = HotelDataModel.objects.get(id=hotel_id)
         except HotelDataModel.DoesNotExist:

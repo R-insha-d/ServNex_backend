@@ -11,7 +11,8 @@ class HotelCreateSerializer(serializers.ModelSerializer):
         fields = [
             'name', 'city', 'area', 'badge',
             'price', 'old_price', 'description','amenities', 'image', 
-            'room_image1', 'room_image2', 'environment_image'
+            'room_image1', 'room_image2', 'environment_image',
+            'latitude', 'longitude', 'keywords'
         ]
 
     def create(self, validated_data):
@@ -64,6 +65,9 @@ class HotelListSerializer(serializers.ModelSerializer):
             'nearby_attractions',
             'average_rating',
             'reviews_count',
+            'latitude',
+            'longitude',
+            'keywords',
         ]
     
     def get_amenities(self, obj):

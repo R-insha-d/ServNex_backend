@@ -31,6 +31,11 @@ class RestaurantDataModel(models.Model):
     area = models.CharField(max_length=100)
     badge = models.CharField(max_length=50, choices=BADGE_CHOICES, null=True, blank=True)
     cuisine_type = models.CharField(max_length=100, help_text="e.g., Italian, Chinese, Indian, Mexican", null=True, blank=True)
+    
+    # New fields for search and location
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
+    keywords = models.TextField(null=True, blank=True, help_text="Keywords for search optimization (comma separated)")
     price_range = models.CharField(max_length=10, choices=PRICE_RANGE_CHOICES, default='₹₹', null=True, blank=True)
     
     average_cost_for_two = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
@@ -50,6 +55,20 @@ class RestaurantDataModel(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        # [NEW] Auto-geocoding logic for Restaurant
+        if not self.latitude or not self.longitude:
+            try:
+                from search.utils import geocode_address
+                address = f"{self.area}, {self.city}"
+                lat, lng = geocode_address(address)
+                if lat and lng:
+                    self.latitude = lat
+                    self.longitude = lng
+            except Exception as e:
+                print(f"Geocoding failed for {self.name}: {e}")
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.name
@@ -94,6 +113,7 @@ class TableReservation(models.Model):
     def save(self, *args, **kwargs):
         import math
         self.tables_reserved = math.ceil(self.number_of_guests / 4)
+        
         super().save(*args, **kwargs)
 
     def __str__(self):

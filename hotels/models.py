@@ -23,6 +23,11 @@ class HotelDataModel(models.Model):
     area = models.CharField(max_length=100)
     badge = models.CharField(max_length=50, choices=BADGE_CHOICES, null=True, blank=True)
     
+    # New fields for search and location
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
+    keywords = models.TextField(null=True, blank=True, help_text="Keywords for search optimization (comma separated)")
+    
     price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     old_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     
@@ -32,6 +37,20 @@ class HotelDataModel(models.Model):
     room_image1 = models.ImageField(upload_to='hotels/rooms/', blank=True, null=True)
     room_image2 = models.ImageField(upload_to='hotels/rooms/', blank=True, null=True)
     environment_image = models.ImageField(upload_to='hotels/environment/', blank=True, null=True)
+
+    def save(self, *args, **kwargs):
+        # [NEW] Auto-geocoding logic for Hotel
+        if not self.latitude or not self.longitude:
+            try:
+                from search.utils import geocode_address
+                address = f"{self.area}, {self.city}"
+                lat, lng = geocode_address(address)
+                if lat and lng:
+                    self.latitude = lat
+                    self.longitude = lng
+            except Exception as e:
+                print(f"Geocoding failed for {self.name}: {e}")
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.name

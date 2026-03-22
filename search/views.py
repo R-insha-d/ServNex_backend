@@ -12,6 +12,7 @@ class GlobalSearchAPIView(APIView):
     def get(self, request):
         try:
             query = request.query_params.get('q', '')
+            city_param = request.query_params.get('city', '')
             lat_str = request.query_params.get('lat')
             lng_str = request.query_params.get('lng')
             search_type = request.query_params.get('type', 'all')
@@ -49,6 +50,8 @@ class GlobalSearchAPIView(APIView):
                         Q(badge__icontains=search_query) |
                         Q(keywords__icontains=search_query)
                     )
+                if city_param and city_param.lower() != "all" and city_param != "Current Location":
+                    hotel_qs = hotel_qs.filter(city__iexact=city_param)
                 
                 hotel_data = HotelListSerializer(hotel_qs, many=True, context={'request': request}).data
                 for item in hotel_data:
@@ -80,6 +83,8 @@ class GlobalSearchAPIView(APIView):
                         Q(badge__icontains=search_query) |
                         Q(keywords__icontains=search_query)
                     )
+                if city_param and city_param.lower() != "all" and city_param != "Current Location":
+                    rest_qs = rest_qs.filter(city__iexact=city_param)
                 
                 rest_data = RestaurantSerializer(rest_qs, many=True, context={'request': request}).data
                 for item in rest_data:

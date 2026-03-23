@@ -173,3 +173,36 @@ class ReviewDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_queryset(self):
         # Users can only edit/delete their own reviews
         return Review.objects.filter(user=self.request.user)
+
+
+class RestaurantAvailabilityView(APIView):
+    """
+    GET: Check availability for all table types (4, 6, 8, 10) for a given date
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, pk):
+        date_str = request.query_params.get('date')
+        if not date_str:
+            return Response({"error": "date is required"}, status=400)
+        
+        try:
+            restaurant = RestaurantDataModel.objects.get(pk=pk)
+        except RestaurantDataModel.DoesNotExist:
+            return Response({"error": "Restaurant not found"}, status=404)
+
+        capacities = [4, 6, 8, 10]
+        availability = {}
+        
+        for cap in capacities:
+            booked = TableReservation.objects.filter(
+                restaurant=restaurant,
+                reservation_date=date_str,
+                table_capacity=cap,
+                status__in=['Your Table Is Ready', 'Table Pending']
+            ).count()
+            
+            total = getattr(restaurant, f'tables_{cap}_capacity', 0)
+            availability[cap] = max(0, total - booked)
+            
+        return Response(availability)

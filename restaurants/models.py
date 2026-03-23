@@ -28,7 +28,7 @@ class RestaurantDataModel(models.Model):
     )
     name = models.CharField(max_length=255)
     city = models.CharField(max_length=100)
-    area = models.CharField(max_length=100)
+    area = models.CharField(max_length=500)
     badge = models.CharField(max_length=50, choices=BADGE_CHOICES, null=True, blank=True)
     cuisine_type = models.CharField(max_length=100, help_text="e.g., Italian, Chinese, Indian, Mexican", null=True, blank=True)
     
@@ -40,11 +40,16 @@ class RestaurantDataModel(models.Model):
     
     average_cost_for_two = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     
-    total_tables = models.PositiveIntegerField(
-        default=10, 
-        help_text="Total number of tables available in the restaurant",
-        null=True, blank=True
-    )
+    # Specific table counts by capacity
+    tables_4_capacity = models.PositiveIntegerField(default=5, help_text="Number of 4-guest tables")
+    tables_6_capacity = models.PositiveIntegerField(default=2, help_text="Number of 6-guest tables")
+    tables_8_capacity = models.PositiveIntegerField(default=2, help_text="Number of 8-guest tables")
+    tables_10_capacity = models.PositiveIntegerField(default=1, help_text="Number of 10-guest tables")
+
+    @property
+    def total_tables(self):
+        return (self.tables_4_capacity + self.tables_6_capacity + 
+                self.tables_8_capacity + self.tables_10_capacity)
 
     description = models.TextField()
     rating = models.DecimalField(max_digits=3, decimal_places=1, null=True, blank=True)
@@ -99,6 +104,7 @@ class TableReservation(models.Model):
     reservation_date = models.DateField()
     reservation_time = models.TimeField()
     number_of_guests = models.PositiveIntegerField(default=2)
+    table_capacity = models.PositiveIntegerField(default=4, help_text="The capacity of the table booked (4, 6, 8, 10)")
     tables_reserved = models.PositiveIntegerField(default=1)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Table Pending')
     special_requests = models.TextField(blank=True, null=True, help_text="Any special requests or dietary restrictions")
@@ -111,8 +117,14 @@ class TableReservation(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
-        import math
-        self.tables_reserved = math.ceil(self.number_of_guests / 4)
+        # Determine table capacity based on guests if not provided
+        if not self.table_capacity:
+            if self.number_of_guests <= 4: self.table_capacity = 4
+            elif self.number_of_guests <= 6: self.table_capacity = 6
+            elif self.number_of_guests <= 8: self.table_capacity = 8
+            else: self.table_capacity = 10
+            
+        self.tables_reserved = 1 # One table of selected capacity
         
         super().save(*args, **kwargs)
 

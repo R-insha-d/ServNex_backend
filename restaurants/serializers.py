@@ -14,12 +14,13 @@ class RestaurantSerializer(serializers.ModelSerializer):
         model = RestaurantDataModel
         fields = [
             'id', 'owner', 'owner_name', 'name', 'city', 'area', 'badge',
-            'cuisine_type', 'price_range', 'average_cost_for_two', 'total_tables',
-            'description', 'rating', 'image', 'menu_image', 'interior_image',
+            'cuisine_type', 'price_range', 'average_cost_for_two', 
+            'tables_4_capacity', 'tables_6_capacity', 'tables_8_capacity', 'tables_10_capacity',
+            'total_tables', 'description', 'rating', 'image', 'menu_image', 'interior_image',
             'latitude', 'longitude', 'keywords',
             'created_at', 'updated_at', 'reviews_count', 'average_rating',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'owner', 'owner_name', 'reviews_count', 'average_rating']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'owner', 'owner_name', 'reviews_count', 'average_rating', 'total_tables']
 
     reviews_count = serializers.SerializerMethodField()
     average_rating = serializers.SerializerMethodField()
@@ -126,32 +127,39 @@ class TableReservationSerializer(serializers.ModelSerializer):
         if data.get('reservation_date') and data['reservation_date'] < date.today():
             raise serializers.ValidationError("Reservation date cannot be in the past.")
 
-        # Table availability check
-        # NOTE: 'completed' is intentionally excluded so those tables are freed up
+        # Table availability check based on capacity
         restaurant = data.get('restaurant')
         reservation_date = data.get('reservation_date')
-        number_of_guests = data.get('number_of_guests', 1)
-        tables_needed = math.ceil(number_of_guests / 4)
+        guests = data.get('number_of_guests', 1)
+        
+        # Determine capacity type
+        if guests <= 4: capacity = 4
+        elif guests <= 6: capacity = 6
+        elif guests <= 8: capacity = 8
+        else: capacity = 10
 
         if restaurant and reservation_date:
+            # Check how many tables of THIS capacity are already booked for this date
             qs = TableReservation.objects.filter(
                 restaurant=restaurant,
                 reservation_date=reservation_date,
-                status__in=['Your Table Is Ready', 'Table Pending']  # completed NOT included
+                table_capacity=capacity,
+                status__in=['Your Table Is Ready', 'Table Pending']
             )
             if self.instance:
                 qs = qs.exclude(pk=self.instance.pk)
 
-            already_booked = qs.aggregate(
-                total=db_models.Sum('tables_reserved')
-            )['total'] or 0
+            already_booked = qs.count() # Each record is 1 table now
 
-            total_tables = restaurant.total_tables or 0
-            available = total_tables - already_booked
+            # Get total allowed for this capacity
+            field_name = f'tables_{capacity}_capacity'
+            total_allowed = getattr(restaurant, field_name, 0)
+            
+            available = total_allowed - already_booked
 
-            if tables_needed > available:
+            if available <= 0:
                 raise serializers.ValidationError(
-                    "Sorry, no tables are available for this date. Please try again after some time."
+                    f"Sorry, no {capacity}-guest tables are available for this date. Please try another table type or date."
                 )
 
         return data

@@ -6,6 +6,7 @@ urlpatterns = [
     path('restaurants/', RestaurantListCreateView.as_view(), name='restaurant-list-create'),
     path('restaurants/me/', RestaurantMeView.as_view()),                          # must be BEFORE <int:pk>
     path('restaurants/<int:pk>/', RestaurantDetailView.as_view(), name='restaurant-detail'),
+    path('restaurants/<int:pk>/availability/', RestaurantAvailabilityView.as_view(), name='restaurant-availability'),
     
     # Reservation endpoints
     path('reservations/', TableReservationListCreateView.as_view(), name='reservation-list-create'),

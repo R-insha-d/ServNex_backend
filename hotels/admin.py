@@ -1,5 +1,5 @@
 from django.contrib import admin
-from hotels.models import HotelDataModel, Booking, Room, NearbyAttraction # Import Booking
+from hotels.models import HotelDataModel, Booking, Room, NearbyAttraction, Coupon # Import Coupon
 from django.utils.html import format_html
 
 # customize the admin display for HotelDataModel (optional but recommended)
@@ -42,27 +42,20 @@ class HotelAdmin(admin.ModelAdmin):
 
 # customize the admin display for Booking
 class BookingAdmin(admin.ModelAdmin):
-    list_display = ('id', 'hotel', 'user', 'check_in', 'check_out', 'status', 'created_at')
+    list_display = ('user', 'hotel', 'status', 'total_original_price', 'discount_amount', 'final_price')
     list_filter = ('status', 'check_in', 'hotel')
     search_fields = ('user__username', 'hotel__name')
     date_hierarchy = 'check_in'
 
-class BookingAdmin(admin.ModelAdmin):
-    list_display = ('user', 'hotel', 'check_in', 'check_out', 'status')
     def get_queryset(self, request):
         qs = super().get_queryset(request)
-        
-        # 1. If Superuser -> Show ALL
         if request.user.is_superuser:
             return qs
-            
-        # 2. If Hotel Owner -> Show ONLY bookings for their hotels
-        # Find hotels owned by this user
         my_hotels = HotelDataModel.objects.filter(owner=request.user)
-        # Filter booking queryset
         return qs.filter(hotel__in=my_hotels)
 
 admin.site.register(HotelDataModel, HotelAdmin)
 admin.site.register(Booking, BookingAdmin)
 admin.site.register(Room)
 admin.site.register(NearbyAttraction)
+admin.site.register(Coupon)

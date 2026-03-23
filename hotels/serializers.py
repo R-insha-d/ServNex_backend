@@ -1,9 +1,14 @@
 from rest_framework import serializers
-from .models import HotelDataModel, Booking, Room, HotelGallery, NearbyAttraction, Review  # Import Review
+from .models import HotelDataModel, Booking, Room, HotelGallery, NearbyAttraction, Review, Coupon  # Import Coupon
 from django.contrib.auth import get_user_model
 from django.db.models import Q, Sum
 
 User = get_user_model()
+
+class CouponSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Coupon
+        fields = ['id', 'code', 'discount_percent', 'valid_from', 'valid_to', 'is_active', 'hotel']
 
 class HotelCreateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -116,8 +121,10 @@ class BookingSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Booking
-        fields = ['id', 'hotel', 'hotel_details', 'check_in', 'check_out', 'status', 'number_of_guests', 'rooms_booked', 'room', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data']
-        read_only_fields = ['user', 'status', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data']
+        fields = ['id', 'hotel', 'hotel_details', 'check_in', 'check_out', 'status', 'number_of_guests', 'rooms_booked', 'room', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data', 'total_original_price', 'discount_amount', 'final_price', 'coupon_code']
+        read_only_fields = ['user', 'status', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data', 'total_original_price', 'discount_amount', 'final_price']
+
+    coupon_code = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     has_review = serializers.SerializerMethodField()
     review_data = serializers.SerializerMethodField()
@@ -187,6 +194,66 @@ class BookingSerializer(serializers.ModelSerializer):
                     f"Only {available_now} rooms are available for these dates. You requested {requested_rooms}."
                 )
 
+        # [NEW] Discount and Pricing Logic
+        user = self.context['request'].user
+        room = data.get('room')
+        hotel = data['hotel']
+        rooms_booked = data.get('rooms_booked', 1)
+        
+        # Calculate base price (per night)
+        price_per_night_per_room = room.price if room else hotel.price
+        num_nights = (check_out - check_in).days
+        total_original_price = price_per_night_per_room * rooms_booked * num_nights
+        
+        data['total_original_price'] = total_original_price
+        
+        # Identify applicable discounts
+        discounts = [] # List of (percentage, reason, coupon_obj)
+
+        # 1. Wednesday Discount (5%)
+        from django.utils import timezone
+        if timezone.now().weekday() == 2: # 0=Monday, 2=Wednesday
+            discounts.append((5, "Wednesday Special", None))
+            
+        # 3. Custom Coupon code
+        coupon_code = data.pop('coupon_code', None)
+        if coupon_code:
+            from .models import Coupon
+            try:
+                coupon = Coupon.objects.get(
+                    code__iexact=coupon_code, 
+                    is_active=True
+                )
+                from django.utils import timezone
+                now = timezone.now()
+                if coupon.valid_from and coupon.valid_from > now:
+                     raise serializers.ValidationError({"coupon_code": "This coupon is not yet active."})
+                if coupon.valid_to and coupon.valid_to < now:
+                     raise serializers.ValidationError({"coupon_code": "This coupon has expired."})
+                # Check if coupon is global or for this specific hotel
+                if coupon.hotel and coupon.hotel != hotel:
+                    raise serializers.ValidationError({"coupon_code": "This coupon is not valid for this hotel."})
+                
+                discounts.append((coupon.discount_percent, f"Coupon: {coupon.code}", coupon))
+            except Coupon.DoesNotExist:
+                raise serializers.ValidationError({"coupon_code": "Invalid or inactive coupon code."})
+
+        # Apply the SINGLE highest discount
+        if discounts:
+            best_discount = max(discounts, key=lambda x: x[0])
+            discount_percent, reason, coupon_obj = best_discount
+            
+            discount_amount = (total_original_price * discount_percent) / 100
+            data['discount_amount'] = discount_amount
+            data['final_price'] = total_original_price - discount_amount
+            data['applied_discount_reason'] = reason # Track reason
+            if coupon_obj:
+                data['applied_coupon'] = coupon_obj
+        else:
+            data['discount_amount'] = 0
+            data['final_price'] = total_original_price
+            data['applied_discount_reason'] = None
+
         return data
 
 class RoomSerializer(serializers.ModelSerializer):
@@ -239,3 +306,22 @@ class ReviewSerializer(serializers.ModelSerializer):
         validated_data['user'] = request.user
         validated_data['hotel'] = booking.hotel
         return super().create(validated_data)
+
+class CouponSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Coupon
+        fields = '__all__'
+
+    def validate_valid_from(self, value):
+        from django.utils import timezone
+        # If it's a NEW coupon (not updating), block past dates
+        if not self.instance and value and value.date() < timezone.now().date():
+            raise serializers.ValidationError("Coupon start date cannot be in the past.")
+        return value
+
+    def validate(self, data):
+        valid_from = data.get('valid_from')
+        valid_to = data.get('valid_to')
+        if valid_from and valid_to and valid_from > valid_to:
+            raise serializers.ValidationError("End date must be after start date.")
+        return data

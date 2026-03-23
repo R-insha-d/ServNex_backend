@@ -6,16 +6,17 @@ from rest_framework.generics import ListAPIView
 from rest_framework.decorators import action
 from rest_framework import status
 
-from .models import HotelDataModel, Booking, Room, HotelGallery, NearbyAttraction, Review # Import Review
+from .models import HotelDataModel, Booking, Room, HotelGallery, NearbyAttraction, Review, Coupon # Import Coupon
 from django.db.models import Q, Sum
 from .serializers import (
     HotelCreateSerializer, 
     HotelListSerializer, 
-    BookingSerializer, # Import BookingSerializer
+    BookingSerializer,
     RoomSerializer,
     HotelGallerySerializer,
     NearbyAttractionSerializer,
     ReviewSerializer,
+    CouponSerializer,
 )
 
 class HotelListAPIView(ListAPIView):
@@ -66,6 +67,21 @@ class BookingViewSet(ModelViewSet):
     def perform_create(self, serializer):
         # The serializer.validate() we wrote earlier handles the availability check!
         serializer.save(user=self.request.user)
+
+    @action(detail=False, methods=['post'])
+    def price_preview(self, request):
+        """
+        Calculates price/discount without creating a booking record.
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        return Response({
+            'total_original_price': data['total_original_price'],
+            'discount_amount': data['discount_amount'],
+            'final_price': data['final_price'],
+            'applied_discount_reason': data.get('applied_discount_reason')
+        })
 
     @action(detail=False, methods=['get'])
     def eligible_for_review(self, request):
@@ -244,3 +260,40 @@ class ReviewViewSet(ModelViewSet):
 
     def get_serializer_context(self):
         return {'request': self.request}
+
+
+class CouponViewSet(ModelViewSet):
+    """
+    ViewSet for handling hotel coupons.
+    Admin/Hotel Owner can manage coupons.
+    """
+    queryset = Coupon.objects.all()
+    serializer_class = CouponSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        hotel_id = self.request.query_params.get('hotel')
+        
+        # If a hotel ID is provided, show all active coupons for that hotel
+        if hotel_id:
+            return Coupon.objects.filter(
+                hotel_id=hotel_id, 
+                is_active=True
+            )
+
+        if user.is_authenticated:
+            if user.is_superuser:
+                return Coupon.objects.all()
+            # Hotel owners can manage coupons for their hotels
+            return Coupon.objects.filter(hotel__owner=user)
+        
+        return Coupon.objects.none()
+
+    def get_permissions(self):
+        if self.action == 'list':
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def perform_create(self, serializer):
+        serializer.save()

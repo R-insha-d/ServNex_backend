@@ -87,6 +87,25 @@ class NearbyAttraction(models.Model):
         return f"{self.name} ({self.distance_km} km from {self.hotel.name})"
 
 
+class Coupon(models.Model):
+    code = models.CharField(max_length=50, unique=True)
+    discount_percent = models.PositiveIntegerField(default=5)
+    valid_from = models.DateTimeField(null=True, blank=True)
+    valid_to = models.DateTimeField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    hotel = models.ForeignKey(
+        HotelDataModel, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='coupons',
+        help_text="If null, coupon is global (all hotels)"
+    )
+
+    def __str__(self):
+        return f"{self.code} ({self.discount_percent}%)"
+
+
 # [NEW] Booking Model for handling reservations
 class Booking(models.Model):
     STATUS_CHOICES = [
@@ -125,6 +144,19 @@ class Booking(models.Model):
         choices=[('pending', 'Pending'), ('paid', 'Paid'), ('failed', 'Failed')], 
         default='pending'
     )
+
+    # Price and Discount fields
+    total_original_price = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    discount_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    final_price = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    applied_coupon = models.ForeignKey(
+        Coupon, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='bookings'
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):

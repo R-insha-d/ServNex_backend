@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import HotelViewSet, BookingViewSet, RoomViewSet, HotelGalleryViewSet, NearbyAttractionViewSet, ReviewViewSet
+from .views import HotelViewSet, BookingViewSet, RoomViewSet, HotelGalleryViewSet, NearbyAttractionViewSet, ReviewViewSet, CouponViewSet
 from .views import HotelDashboardView
 
 router = DefaultRouter()
@@ -15,6 +15,7 @@ router.register(r'rooms', RoomViewSet, basename='rooms')
 router.register(r'gallery', HotelGalleryViewSet, basename='gallery')
 router.register(r'nearby-attractions', NearbyAttractionViewSet, basename='nearby-attractions')
 router.register(r'hotel-reviews', ReviewViewSet, basename='hotel-reviews')
+router.register(r'coupons', CouponViewSet, basename='coupons')
 
 urlpatterns = [
     path('', include(router.urls)),

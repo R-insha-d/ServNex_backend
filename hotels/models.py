@@ -200,3 +200,11 @@ class Review(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+class ReviewImage(models.Model):
+    review = models.ForeignKey(Review, on_delete=models.CASCADE, related_name='images')
+    image = models.ImageField(upload_to='review_photos/')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Image for {self.review}"

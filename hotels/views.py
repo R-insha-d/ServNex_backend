@@ -271,6 +271,17 @@ class ReviewViewSet(ModelViewSet):
     def get_serializer_context(self):
         return {'request': self.request}
 
+    @action(detail=False, methods=['get'])
+    def all_owner_reviews(self, request):
+        user = request.user
+        if not user.is_authenticated:
+            return Response({"detail": "Authentication credentials were not provided."}, status=status.HTTP_401_UNAUTHORIZED)
+        
+        # Get all reviews for hotels owned by the current user
+        reviews = Review.objects.filter(hotel__owner=user).order_by('-created_at')
+        serializer = self.get_serializer(reviews, many=True)
+        return Response(serializer.data)
+
 
 class CouponViewSet(ModelViewSet):
     """

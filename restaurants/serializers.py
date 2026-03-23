@@ -1,7 +1,7 @@
 import math
 from django.db import models as db_models
 from rest_framework import serializers
-from .models import RestaurantDataModel, TableReservation,Review
+from .models import RestaurantDataModel, TableReservation, Review, ReviewImage
 
 
 class RestaurantSerializer(serializers.ModelSerializer):
@@ -42,15 +42,21 @@ class RestaurantSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
     
 
+class ReviewImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ReviewImage
+        fields = ['id', 'image', 'created_at']
+
 class ReviewSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source='user.first_name', read_only=True)
     user_email = serializers.EmailField(source='user.email', read_only=True)
+    images = ReviewImageSerializer(many=True, read_only=True)
 
     class Meta:
         model = Review
         fields = [
             'id', 'reservation', 'restaurant', 'user', 'user_name',
-            'user_email', 'rating', 'comment', 'created_at'
+            'user_email', 'rating', 'comment', 'created_at', 'images'
         ]
         read_only_fields = ['id', 'created_at', 'user', 'user_name', 'user_email', 'restaurant']
 
@@ -72,9 +78,15 @@ class ReviewSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         request = self.context.get('request')
         reservation = validated_data['reservation']
+        images_data = request.FILES.getlist('images')
+
         validated_data['user'] = request.user
         validated_data['restaurant'] = reservation.restaurant
-        return super().create(validated_data)
+        review = super().create(validated_data)
+
+        for image_data in images_data:
+            ReviewImage.objects.create(review=review, image=image_data)
+        return review
 
 
 class TableReservationSerializer(serializers.ModelSerializer):
@@ -117,6 +129,7 @@ class TableReservationSerializer(serializers.ModelSerializer):
                 'rating': obj.review.rating,
                 'comment': obj.review.comment,
                 'created_at': obj.review.created_at,
+                'images': ReviewImageSerializer(obj.review.images.all(), many=True).data
             }
         return None
 

@@ -57,12 +57,16 @@ class BookingViewSet(ModelViewSet):
     serializer_class = BookingSerializer
 
     def get_queryset(self):
-        # Users see only their own bookings
+        # Users see their own bookings OR bookings for hotels they own
         # Admins (superusers) can see all
         user = self.request.user
         if user.is_superuser:
             return Booking.objects.all()
-        return Booking.objects.filter(user=user)
+        
+        # Use Q for OR logic
+        return Booking.objects.filter(
+            Q(user=user) | Q(hotel__owner=user)
+        ).distinct().order_by('-id')
 
     def perform_create(self, serializer):
         # The serializer.validate() we wrote earlier handles the availability check!
@@ -136,9 +140,9 @@ class BookingViewSet(ModelViewSet):
         # Calculate rooms needed
         rooms_needed = int(request.query_params.get('rooms_booked', 1))
 
-        # Check existing bookings
-        # Base filter
-        filters = Q(hotel=hotel) & Q(status='confirmed') & Q(check_in__lt=check_out) & Q(check_out__gt=check_in)
+        # Check existing bookings (only confirmed or paid ones block slots)
+        blocking_statuses = ['confirmed', 'paid']
+        filters = Q(hotel=hotel) & Q(status__in=blocking_statuses) & Q(check_in__lt=check_out) & Q(check_out__gt=check_in)
         
         if room_id:
             filters &= Q(room_id=room_id)
@@ -147,10 +151,16 @@ class BookingViewSet(ModelViewSet):
 
         if (overlapping_rooms + rooms_needed) <= total_capacity:
              remaining = total_capacity - overlapping_rooms
-             return Response({"available": True, "message": "Room available", "remaining_rooms": remaining})
-        else:
-             return Response({"available": False, "message": "Room is full", "remaining_rooms": 0})
-    
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def complete_booking(self, request, pk=None):
+        booking = self.get_object()
+        if booking.hotel.owner != request.user:
+            return Response({"error": "Unauthorized"}, status=status.HTTP_403_FORBIDDEN)
+        
+        booking.status = 'completed'
+        booking.save()
+        return Response({"status": "Booking marked as completed"})
+
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def eligible_for_review(self, request):
         hotel_id = request.query_params.get('hotel_id')

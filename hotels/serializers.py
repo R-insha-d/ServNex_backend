@@ -179,7 +179,8 @@ class BookingSerializer(serializers.ModelSerializer):
         if total_rooms > 0:
             # 3. Sum rooms already booked for overlapping dates
             # Base filters
-            filters = Q(hotel=hotel) & Q(status='confirmed') & Q(check_in__lt=check_out) & Q(check_out__gt=check_in)
+            blocking_statuses = ['confirmed', 'paid']
+            filters = Q(hotel=hotel) & Q(status__in=blocking_statuses) & Q(check_in__lt=check_out) & Q(check_out__gt=check_in)
             
             # If a specific room is selected, only check bookings for that room
             if room:

@@ -103,6 +103,31 @@ class VerifyPaymentView(APIView):
                         
                     booking_obj.save()
 
+                    # Send Email to Business Owner
+                    from django.core.mail import send_mail
+                    from django.conf import settings
+                    owner_email = None
+                    if isinstance(booking_obj, Booking) and getattr(booking_obj.hotel.owner, 'email', None):
+                        owner_email = booking_obj.hotel.owner.email
+                        subject = f"New Booking Confirmed - {booking_obj.hotel.name}"
+                        message = f"Hello,\n\nA new booking has been confirmed for {booking_obj.hotel.name} by {booking_obj.user.first_name}.\n\nDetails:\nCheck-in: {booking_obj.check_in}\nCheck-out: {booking_obj.check_out}\nRooms Booked: {booking_obj.rooms_booked}\n\nThis booking is fully paid and confirmed.\n\nThank you!"
+                    elif hasattr(booking_obj, 'restaurant') and getattr(booking_obj.restaurant.owner, 'email', None):
+                        owner_email = booking_obj.restaurant.owner.email
+                        subject = f"New Table Reservation - {booking_obj.restaurant.name}"
+                        message = f"Hello,\n\nA new table reservation has been confirmed for {booking_obj.restaurant.name} by {booking_obj.user.first_name}.\n\nDetails:\nDate: {booking_obj.reservation_date}\nTime: {booking_obj.reservation_time}\nGuests: {booking_obj.number_of_guests}\n\nThis reservation is fully paid and confirmed.\n\nThank you!"
+
+                    if owner_email:
+                        try:
+                            send_mail(
+                                subject=subject,
+                                message=message,
+                                from_email=settings.EMAIL_HOST_USER,
+                                recipient_list=[owner_email],
+                                fail_silently=True
+                            )
+                        except Exception as e:
+                            print(f"Failed to send email: {e}")
+
                 return Response({"status": "Payment Verified Successfully"}, status=status.HTTP_200_OK)
             except razorpay.errors.SignatureVerificationError:
                 payment = Payment.objects.filter(razorpay_order_id=razorpay_order_id).first()

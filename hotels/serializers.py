@@ -121,8 +121,8 @@ class BookingSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Booking
-        fields = ['id', 'hotel', 'hotel_details', 'check_in', 'check_out', 'status', 'number_of_guests', 'rooms_booked', 'room', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data', 'total_original_price', 'discount_amount', 'final_price', 'coupon_code', 'discount_reason']
-        read_only_fields = ['user', 'status', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data', 'total_original_price', 'discount_amount', 'final_price', 'discount_reason']
+        fields = ['id', 'hotel', 'hotel_details', 'check_in', 'check_out', 'status', 'number_of_guests', 'rooms_booked', 'room', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data', 'total_original_price', 'discount_amount', 'final_price', 'coupon_code', 'discount_reason', 'created_at']
+        read_only_fields = ['user', 'status', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data', 'total_original_price', 'discount_amount', 'final_price', 'discount_reason', 'created_at']
 
     coupon_code = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
@@ -155,7 +155,7 @@ class BookingSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Check-out date must be after check-in.")
 
         from django.utils import timezone
-        if check_in < timezone.now().date():
+        if check_in < timezone.localtime().date():
             raise serializers.ValidationError("Check-in date cannot be in the past.")
 
         # 1. Calculate rooms needed for THIS booking (1 room per 2 guests)
@@ -178,10 +178,14 @@ class BookingSerializer(serializers.ModelSerializer):
 
         if total_rooms > 0:
             # 3. Sum rooms already booked for overlapping dates
-            # Base filters
-            blocking_statuses = ['confirmed', 'completed']
+            from django.utils import timezone
+            from datetime import timedelta
+            pending_timeout = timezone.now() - timedelta(minutes=5)
 
-            filters = Q(hotel=hotel) & Q(status__in=blocking_statuses) & Q(check_in__lt=check_out) & Q(check_out__gt=check_in)
+            # A booking blocks a room only if it is 'confirmed' or already 'paid'
+            blocking_filter = Q(status='confirmed') | (Q(status='pending') & Q(payment_status='paid'))
+
+            filters = Q(hotel=hotel) & blocking_filter & Q(check_in__lt=check_out) & Q(check_out__gt=check_in)
             
             # If a specific room is selected, only check bookings for that room
             if room:
@@ -256,16 +260,9 @@ class BookingSerializer(serializers.ModelSerializer):
         return data
 
 class RoomSerializer(serializers.ModelSerializer):
-    amenities = serializers.SerializerMethodField()
-
     class Meta:
         model = Room
         fields = '__all__'
-
-    def get_amenities(self, obj):
-        if obj.amenities:
-            return [a.strip() for a in obj.amenities.split(',') if a.strip()]
-        return []
 
 class HotelGallerySerializer(serializers.ModelSerializer):
     class Meta:

@@ -91,6 +91,28 @@ class RestaurantReservationDetailView(generics.RetrieveUpdateDestroyAPIView):
             Q(user=user) | Q(restaurant__owner=user)
         )
 
+    def perform_update(self, serializer):
+        from rest_framework.exceptions import ValidationError
+        instance = self.get_object()
+        if instance.status in ['cancelled', 'completed']:
+            raise ValidationError(detail=f"Reservation is already {instance.status}")
+        
+        updated_instance = serializer.save()
+        
+        if updated_instance.status == 'cancelled':
+            from django.core.mail import send_mail
+            from django.conf import settings
+            try:
+                send_mail(
+                    subject=f"Reservation Cancellation Initiated - {updated_instance.restaurant.name}",
+                    message=f"Hello {updated_instance.user.first_name},\n\nYour cancelation request initiated , payment will refund within 24 h.\n\nReservation ID: SNX-RES-{updated_instance.id}\nRestaurant: {updated_instance.restaurant.name}\n\nThank you.",
+                    from_email=settings.EMAIL_HOST_USER,
+                    recipient_list=[updated_instance.user.email],
+                    fail_silently=True
+                )
+            except Exception as e:
+                print(f"Failed to send email: {e}")
+
 
 class RestaurantMeView(APIView):
     permission_classes = [permissions.IsAuthenticated]

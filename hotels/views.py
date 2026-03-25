@@ -114,12 +114,17 @@ class BookingViewSet(ModelViewSet):
         room_id = request.query_params.get('room_id') # [NEW]
         check_in = request.query_params.get('check_in')
         check_out = request.query_params.get('check_out')
+        rooms_needed = int(request.query_params.get('rooms_booked', 1))
 
         if not all([hotel_id, check_in, check_out]):
              return Response({"error": "Missing parameters"}, status=status.HTTP_400_BAD_REQUEST)
         
         if check_in >= check_out:
             return Response({"error": "Check-out date must be after check-in date."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        from django.utils import timezone
+        if check_in < str(timezone.localtime().date()):
+            return Response({"error": "Check-in date cannot be in the past."}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
              hotel = HotelDataModel.objects.get(id=hotel_id)
@@ -137,13 +142,18 @@ class BookingViewSet(ModelViewSet):
              # Calculate sum of all rooms for the hotel
              total_capacity = Room.objects.filter(hotel=hotel).aggregate(total=Sum('total_rooms'))['total'] or 0
 
-        # Calculate rooms needed
-        rooms_needed = int(request.query_params.get('rooms_booked', 1))
+        # Check existing bookings (only confirmed or recent/active pending ones block slots)
+        from django.utils import timezone
+        from datetime import timedelta
+        pending_timeout = timezone.now() - timedelta(minutes=5)
 
-        # Check existing bookings (only confirmed or paid ones block slots)
-        blocking_statuses = ['confirmed', 'completed']
+        # A booking blocks a room if:
+        # 1. It is 'confirmed'
+        # 2. It is 'pending' but NOT yet 'failed' AND was created recently (last 30 mins)
+        # A booking blocks a room only if it is 'confirmed' or already 'paid'
+        blocking_filter = Q(status='confirmed') | (Q(status='pending') & Q(payment_status='paid'))
 
-        filters = Q(hotel=hotel) & Q(status__in=blocking_statuses) & Q(check_in__lt=check_out) & Q(check_out__gt=check_in)
+        filters = Q(hotel=hotel) & blocking_filter & Q(check_in__lt=check_out) & Q(check_out__gt=check_in)
         
         if room_id:
             filters &= Q(room_id=room_id)
@@ -171,6 +181,44 @@ class BookingViewSet(ModelViewSet):
         booking.status = 'completed'
         booking.save()
         return Response({"status": "Booking marked as completed"})
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def cancel_booking(self, request, pk=None):
+        booking = self.get_object()
+        if booking.user != request.user and booking.hotel.owner != request.user:
+            return Response({"error": "Unauthorized"}, status=status.HTTP_403_FORBIDDEN)
+        
+        if booking.status in ['cancelled', 'completed']:
+            return Response({"error": f"Booking is already {booking.status}"}, status=status.HTTP_400_BAD_REQUEST)
+            
+        booking.status = 'cancelled'
+        booking.save()
+
+        # Send Email to User
+        from django.core.mail import send_mail
+        from django.conf import settings
+        try:
+            send_mail(
+                subject=f"Booking Cancellation Initiated - {booking.hotel.name}",
+                message=f"Hello {booking.user.first_name},\n\nYour cancelation request initiated , payment will refund within 24 h.\n\nBooking ID: SNX-HTL-{booking.id}\nHotel: {booking.hotel.name}\n\nThank you.",
+                from_email=settings.EMAIL_HOST_USER,
+                recipient_list=[booking.user.email],
+                fail_silently=True
+            )
+        except Exception as e:
+            print(f"Failed to send email: {e}")
+
+        return Response({"status": "Booking cancelled successfully"})
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def fail_payment(self, request, pk=None):
+        booking = self.get_object()
+        if booking.user != request.user:
+            return Response({"error": "Unauthorized"}, status=status.HTTP_403_FORBIDDEN)
+        
+        booking.payment_status = 'failed'
+        booking.save()
+        return Response({"status": "Payment status updated to failed"})
 
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def eligible_for_review(self, request):
@@ -204,9 +252,17 @@ class HotelDashboardView(APIView):
         # 2. Find all bookings for THESE hotels
         # e.g. User Y booked "Taj Hotel" -> Show this
         # e.g. User Z booked "Oberoi" (User A owner) -> Hide this
+        from django.utils import timezone
+        from datetime import timedelta
+        pending_timeout = timezone.now() - timedelta(minutes=5)
+
         my_bookings = Booking.objects.filter(
             hotel__in=my_hotels, 
-            status__in=['confirmed', 'completed', 'cancelled']
+            status__in=['confirmed', 'completed', 'cancelled', 'pending']
+        ).filter(
+            Q(status__in=['confirmed', 'completed', 'cancelled']) |
+            Q(status='pending', payment_status='paid') |
+            Q(status='pending', created_at__gte=pending_timeout)
         ).select_related('user', 'hotel')
 
         
@@ -214,14 +270,16 @@ class HotelDashboardView(APIView):
         for booking in my_bookings:
             data.append({
                 "booking_id": booking.id,
-                "customer_name": booking.user.username,  # Adjust if using get_full_name()
+                "customer_name": booking.user.first_name or booking.user.username,
                 "customer_email": booking.user.email,
+                "customer_phone": booking.user.phone,
                 "hotel_name": booking.hotel.name,
                 "check_in": booking.check_in,
                 "check_out": booking.check_out,
                 "status": booking.status,
                 "room_type": booking.room_type_name, # [NEW]
-                "booked_at": booking.created_at
+                "booked_at": booking.created_at,
+                "rooms_booked": booking.rooms_booked,
             })
             
         return Response(data)

@@ -8,6 +8,9 @@ from hotels.serializers import HotelListSerializer
 from restaurants.serializers import RestaurantSerializer
 from .utils import haversine_distance
 
+# Maximum radius (km) used when filtering by detected location
+MAX_DISTANCE_KM = 50
+
 class GlobalSearchAPIView(APIView):
     def get(self, request):
         try:
@@ -30,16 +33,15 @@ class GlobalSearchAPIView(APIView):
             nl_keywords = ['near', 'nearby', 'around', ' me', 'hotels', 'hotel', 'restaurants', 'restaurant']
             for kw in nl_keywords:
                 processed_query = processed_query.replace(kw, '').strip()
-            
-            # If processed_query is empty, it was pure filler (e.g., "near me").
-            # Return all results but prioritized by location.
+
             search_query = processed_query if processed_query else None
 
             results = []
 
-            # 1. Search Hotels
+            # ── 1. Search Hotels ──────────────────────────────────────────────
             if search_type in ['all', 'hotel']:
                 hotel_qs = HotelDataModel.objects.all()
+
                 if search_query:
                     hotel_qs = hotel_qs.filter(
                         Q(name__icontains=search_query) |
@@ -50,29 +52,54 @@ class GlobalSearchAPIView(APIView):
                         Q(badge__icontains=search_query) |
                         Q(keywords__icontains=search_query)
                     )
-                if city_param and city_param.lower() != "all" and city_param != "Current Location":
+
+                # Apply city filter only when no coordinates are provided
+                if city_param and city_param.lower() != "all" and city_param != "Current Location" and lat is None:
                     hotel_qs = hotel_qs.filter(city__iexact=city_param)
-                
+
                 hotel_data = HotelListSerializer(hotel_qs, many=True, context={'request': request}).data
+
+                nearby_hotels = []
                 for item in hotel_data:
                     item['result_type'] = 'hotel'
+                    item['distance'] = None
+
                     if lat is not None and lng is not None and item.get('id'):
                         try:
                             hotel_obj = HotelDataModel.objects.get(id=item['id'])
                             if hotel_obj.latitude is not None and hotel_obj.longitude is not None:
-                                item['distance'] = haversine_distance(
-                                    lat, lng, 
-                                    hotel_obj.latitude, hotel_obj.longitude
-                                )
-                            else:
-                                item['distance'] = None
+                                dist = haversine_distance(lat, lng, hotel_obj.latitude, hotel_obj.longitude)
+                                item['distance'] = dist
+                                # ✅ Only include hotels within MAX_DISTANCE_KM
+                                if dist <= MAX_DISTANCE_KM:
+                                    nearby_hotels.append(item)
+                            # Hotels with no coordinates stored are skipped in location mode
                         except Exception:
-                            item['distance'] = None
-                    results.append(item)
+                            pass
+                    else:
+                        nearby_hotels.append(item)
 
-            # 2. Search Restaurants
+                # Fallback: if location mode but 0 results found (e.g. no lat/lng in DB),
+                # try matching by detected city name instead
+                if lat is not None and lng is not None and len(nearby_hotels) == 0 and city_param and city_param not in ("All", "Current Location", "__locate__"):
+                    fallback_qs = HotelDataModel.objects.filter(city__iexact=city_param)
+                    if search_query:
+                        fallback_qs = fallback_qs.filter(
+                            Q(name__icontains=search_query) |
+                            Q(description__icontains=search_query)
+                        )
+                    fallback_data = HotelListSerializer(fallback_qs, many=True, context={'request': request}).data
+                    for item in fallback_data:
+                        item['result_type'] = 'hotel'
+                        item['distance'] = None
+                    nearby_hotels = list(fallback_data)
+
+                results.extend(nearby_hotels)
+
+            # ── 2. Search Restaurants ─────────────────────────────────────────
             if search_type in ['all', 'restaurant']:
                 rest_qs = RestaurantDataModel.objects.all()
+
                 if search_query:
                     rest_qs = rest_qs.filter(
                         Q(name__icontains=search_query) |
@@ -83,36 +110,42 @@ class GlobalSearchAPIView(APIView):
                         Q(badge__icontains=search_query) |
                         Q(keywords__icontains=search_query)
                     )
-                if city_param and city_param.lower() != "all" and city_param != "Current Location":
+
+                if city_param and city_param.lower() != "all" and city_param != "Current Location" and lat is None:
                     rest_qs = rest_qs.filter(city__iexact=city_param)
-                
+
                 rest_data = RestaurantSerializer(rest_qs, many=True, context={'request': request}).data
+
                 for item in rest_data:
                     item['result_type'] = 'restaurant'
+                    item['distance'] = None
+
                     if lat is not None and lng is not None and item.get('id'):
                         try:
                             rest_obj = RestaurantDataModel.objects.get(id=item['id'])
                             if rest_obj.latitude is not None and rest_obj.longitude is not None:
-                                item['distance'] = haversine_distance(
-                                    lat, lng, 
-                                    rest_obj.latitude, rest_obj.longitude
-                                )
-                            else:
-                                item['distance'] = None
+                                dist = haversine_distance(lat, lng, rest_obj.latitude, rest_obj.longitude)
+                                item['distance'] = dist
+                                # ✅ Only include restaurants within MAX_DISTANCE_KM
+                                if dist <= MAX_DISTANCE_KM:
+                                    results.append(item)
                         except Exception:
-                            item['distance'] = None
-                    results.append(item)
+                            pass
+                    else:
+                        results.append(item)
 
-            # 3. Sort by distance if applicable
+            # ── 3. Sort by distance (closest first) when location is active ───
             if lat is not None and lng is not None:
                 results.sort(key=lambda x: x.get('distance') if x.get('distance') is not None else float('inf'))
 
             return Response(results, status=status.HTTP_200_OK)
-            
+
         except Exception as e:
             import traceback
             print(traceback.format_exc())
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 
 class SuggestionsAPIView(APIView):
     """

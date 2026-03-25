@@ -63,6 +63,7 @@ class CreateRazorpayOrderView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class VerifyPaymentView(APIView):
+
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):

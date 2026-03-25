@@ -125,9 +125,10 @@ class RestaurantDashboardReservationsView(APIView):
 
     def get(self, request):
         reservations = TableReservation.objects.filter(
-            restaurant__owner=request.user
+            restaurant__owner=request.user,
+            payment_status='paid'
         ).exclude(
-            status='completed'
+            status__in=['completed', 'cancelled']
         ).select_related('user', 'restaurant')
         serializer = TableReservationSerializer(reservations, many=True)
         return Response(serializer.data)
@@ -198,8 +199,9 @@ class RestaurantAvailabilityView(APIView):
             booked = TableReservation.objects.filter(
                 restaurant=restaurant,
                 reservation_date=date_str,
-                table_capacity=cap,
-                status__in=['Your Table Is Ready', 'Table Pending']
+                table_capacity=cap
+            ).filter(
+                Q(payment_status='paid') | Q(status__in=['Your Table Is Ready', 'completed'])
             ).count()
             
             total = getattr(restaurant, f'tables_{cap}_capacity', 0)

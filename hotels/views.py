@@ -84,7 +84,7 @@ class BookingViewSet(ModelViewSet):
             'total_original_price': data['total_original_price'],
             'discount_amount': data['discount_amount'],
             'final_price': data['final_price'],
-            'applied_discount_reason': data.get('applied_discount_reason')
+            'discount_reason': data.get('discount_reason')
         })
 
     @action(detail=False, methods=['get'])
@@ -141,7 +141,8 @@ class BookingViewSet(ModelViewSet):
         rooms_needed = int(request.query_params.get('rooms_booked', 1))
 
         # Check existing bookings (only confirmed or paid ones block slots)
-        blocking_statuses = ['confirmed', 'paid']
+        blocking_statuses = ['confirmed', 'completed']
+
         filters = Q(hotel=hotel) & Q(status__in=blocking_statuses) & Q(check_in__lt=check_out) & Q(check_out__gt=check_in)
         
         if room_id:
@@ -151,6 +152,16 @@ class BookingViewSet(ModelViewSet):
 
         if (overlapping_rooms + rooms_needed) <= total_capacity:
              remaining = total_capacity - overlapping_rooms
+             return Response({
+                 "available": True,
+                 "remaining_rooms": remaining
+             })
+        else:
+             return Response({
+                 "available": False,
+                 "remaining_rooms": max(0, total_capacity - overlapping_rooms)
+             })
+
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def complete_booking(self, request, pk=None):
         booking = self.get_object()
@@ -193,7 +204,11 @@ class HotelDashboardView(APIView):
         # 2. Find all bookings for THESE hotels
         # e.g. User Y booked "Taj Hotel" -> Show this
         # e.g. User Z booked "Oberoi" (User A owner) -> Hide this
-        my_bookings = Booking.objects.filter(hotel__in=my_hotels).select_related('user', 'hotel')
+        my_bookings = Booking.objects.filter(
+            hotel__in=my_hotels, 
+            status__in=['confirmed', 'completed', 'cancelled']
+        ).select_related('user', 'hotel')
+
         
         data = []
         for booking in my_bookings:
@@ -298,10 +313,24 @@ class CouponViewSet(ModelViewSet):
         
         # If a hotel ID is provided, show all active coupons for that hotel
         if hotel_id:
-            return Coupon.objects.filter(
+            queryset = Coupon.objects.filter(
                 hotel_id=hotel_id, 
                 is_active=True
             )
+            
+            # [NEW] Filter by check-in date if provided
+            check_in = self.request.query_params.get('check_in')
+            if check_in:
+                from django.utils.dateparse import parse_date
+                d = parse_date(check_in)
+                if d:
+                    # Coupon must be valid on the check-in date
+                    queryset = queryset.filter(
+                        Q(valid_from__date__lte=d) | Q(valid_from__isnull=True),
+                        Q(valid_to__date__gte=d) | Q(valid_to__isnull=True)
+                    )
+            return queryset
+
 
         if user.is_authenticated:
             if user.is_superuser:

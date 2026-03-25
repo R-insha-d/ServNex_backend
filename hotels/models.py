@@ -109,10 +109,12 @@ class Coupon(models.Model):
 # [NEW] Booking Model for handling reservations
 class Booking(models.Model):
     STATUS_CHOICES = [
+        ('pending', 'Pending'),
         ('confirmed', 'Confirmed'),
         ('cancelled', 'Cancelled'),
         ('completed', 'Completed'),
     ]
+
 
     user = models.ForeignKey(
         User, 
@@ -134,7 +136,8 @@ class Booking(models.Model):
     
     check_in = models.DateField()
     check_out = models.DateField()
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='confirmed')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+
     number_of_guests = models.PositiveIntegerField(default=2)
     rooms_booked = models.PositiveIntegerField(default=1)
     room_type_name = models.CharField(max_length=100, null=True, blank=True)
@@ -156,6 +159,8 @@ class Booking(models.Model):
         blank=True, 
         related_name='bookings'
     )
+    discount_reason = models.CharField(max_length=255, null=True, blank=True)
+
 
     created_at = models.DateTimeField(auto_now_add=True)
 

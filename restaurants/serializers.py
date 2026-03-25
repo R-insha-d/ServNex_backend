@@ -156,8 +156,9 @@ class TableReservationSerializer(serializers.ModelSerializer):
             qs = TableReservation.objects.filter(
                 restaurant=restaurant,
                 reservation_date=reservation_date,
-                table_capacity=capacity,
-                status__in=['Your Table Is Ready', 'Table Pending']
+                table_capacity=capacity
+            ).filter(
+                db_models.Q(payment_status='paid') | db_models.Q(status__in=['Your Table Is Ready', 'completed'])
             )
             if self.instance:
                 qs = qs.exclude(pk=self.instance.pk)

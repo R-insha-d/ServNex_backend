@@ -121,8 +121,8 @@ class BookingSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Booking
-        fields = ['id', 'hotel', 'hotel_details', 'check_in', 'check_out', 'status', 'number_of_guests', 'rooms_booked', 'room', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data', 'total_original_price', 'discount_amount', 'final_price', 'coupon_code']
-        read_only_fields = ['user', 'status', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data', 'total_original_price', 'discount_amount', 'final_price']
+        fields = ['id', 'hotel', 'hotel_details', 'check_in', 'check_out', 'status', 'number_of_guests', 'rooms_booked', 'room', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data', 'total_original_price', 'discount_amount', 'final_price', 'coupon_code', 'discount_reason']
+        read_only_fields = ['user', 'status', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data', 'total_original_price', 'discount_amount', 'final_price', 'discount_reason']
 
     coupon_code = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
@@ -179,7 +179,8 @@ class BookingSerializer(serializers.ModelSerializer):
         if total_rooms > 0:
             # 3. Sum rooms already booked for overlapping dates
             # Base filters
-            blocking_statuses = ['confirmed', 'paid']
+            blocking_statuses = ['confirmed', 'completed']
+
             filters = Q(hotel=hotel) & Q(status__in=blocking_statuses) & Q(check_in__lt=check_out) & Q(check_out__gt=check_in)
             
             # If a specific room is selected, only check bookings for that room
@@ -211,10 +212,7 @@ class BookingSerializer(serializers.ModelSerializer):
         # Identify applicable discounts
         discounts = [] # List of (percentage, reason, coupon_obj)
 
-        # 1. Wednesday Discount (5%)
-        from django.utils import timezone
-        if timezone.now().weekday() == 2: # 0=Monday, 2=Wednesday
-            discounts.append((5, "Wednesday Special", None))
+
             
         # 3. Custom Coupon code
         coupon_code = data.pop('coupon_code', None)
@@ -226,11 +224,11 @@ class BookingSerializer(serializers.ModelSerializer):
                     is_active=True
                 )
                 from django.utils import timezone
-                now = timezone.now()
-                if coupon.valid_from and coupon.valid_from > now:
-                     raise serializers.ValidationError({"coupon_code": "This coupon is not yet active."})
-                if coupon.valid_to and coupon.valid_to < now:
-                     raise serializers.ValidationError({"coupon_code": "This coupon has expired."})
+                # Check if booking date is within coupon validity
+                if coupon.valid_from and coupon.valid_from.date() > check_in:
+                     raise serializers.ValidationError({"coupon_code": "This coupon is not yet active for your booking dates."})
+                if coupon.valid_to and coupon.valid_to.date() < check_in:
+                     raise serializers.ValidationError({"coupon_code": "This coupon has expired for your booking dates."})
                 # Check if coupon is global or for this specific hotel
                 if coupon.hotel and coupon.hotel != hotel:
                     raise serializers.ValidationError({"coupon_code": "This coupon is not valid for this hotel."})
@@ -247,13 +245,13 @@ class BookingSerializer(serializers.ModelSerializer):
             discount_amount = (total_original_price * discount_percent) / 100
             data['discount_amount'] = discount_amount
             data['final_price'] = total_original_price - discount_amount
-            data['applied_discount_reason'] = reason # Track reason
+            data['discount_reason'] = reason # Track reason
             if coupon_obj:
                 data['applied_coupon'] = coupon_obj
         else:
             data['discount_amount'] = 0
             data['final_price'] = total_original_price
-            data['applied_discount_reason'] = None
+            data['discount_reason'] = None
 
         return data
 

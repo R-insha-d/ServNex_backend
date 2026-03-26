@@ -5,6 +5,15 @@ from django.db.models import Q
 from .models import RestaurantDataModel, TableReservation, Review
 from rest_framework.parsers import MultiPartParser, FormParser
 from .serializers import RestaurantSerializer, TableReservationSerializer,ReviewSerializer
+import razorpay
+from django.conf import settings
+from django.utils import timezone
+from datetime import datetime, time, timedelta
+from django.contrib.contenttypes.models import ContentType
+from payments.models import Payment
+
+# Initialize Razorpay Client
+client = razorpay.Client(auth=(settings.RAZR_KEY_ID, settings.RAZR_KEY_SECRET))
 
 
 class RestaurantListCreateView(generics.ListCreateAPIView):
@@ -100,12 +109,83 @@ class RestaurantReservationDetailView(generics.RetrieveUpdateDestroyAPIView):
         updated_instance = serializer.save()
         
         if updated_instance.status == 'cancelled':
+            # ── REFUND POLICY CALCULATOR ──
+            now = timezone.now()
+            # Combine date and time to get the reservation datetime
+            reservation_dt = timezone.make_aware(datetime.combine(
+                updated_instance.reservation_date, 
+                updated_instance.reservation_time
+            ))
+            
+            # Policy rules
+            hours_diff = (reservation_dt - now).total_seconds() / 3600
+            booking_age_mins = (now - updated_instance.created_at).total_seconds() / 60
+            
+            refund_percentage = 0.0
+            reason = "No refund (reservation time has passed)"
+
+            if booking_age_mins <= 10:
+                refund_percentage = 1.0
+                reason = "Full refund (Grace Period - cancelled within 10 mins of booking)"
+            elif hours_diff >= 2:
+                refund_percentage = 1.0
+                reason = "Full refund (≥ 2 hours before reservation)"
+            elif reservation_dt > now:
+                refund_percentage = 0.5
+                reason = "Partial refund (50% - cancelled within 2 hours of reservation)"
+            
+            refund_status = "Not applicable"
+            refund_id = None
+
+            if refund_percentage > 0:
+                try:
+                    content_type = ContentType.objects.get_for_model(TableReservation)
+                    payment = Payment.objects.filter(
+                        content_type=content_type,
+                        object_id=updated_instance.id,
+                        status='success'
+                    ).first()
+
+                    if payment and payment.razorpay_payment_id:
+                        refund_amount = int(float(payment.amount) * refund_percentage * 100)
+                        refund_resp = client.payment.refund(payment.razorpay_payment_id, {
+                            "amount": refund_amount,
+                            "notes": {"reason": reason, "reservation_id": updated_instance.id}
+                        })
+                        refund_id = refund_resp.get('id')
+                        refund_status = f"Initiated ({int(refund_percentage*100)}% refund)"
+                    else:
+                        refund_status = "Skipped (No successful payment found)"
+                except Exception as e:
+                    print(f"Razorpay Refund Error: {e}")
+                    refund_status = f"Failed to automate ({str(e)})"
+
+            # Send Email
             from django.core.mail import send_mail
             from django.conf import settings
+            
+            email_message = (
+                f"Hello {updated_instance.user.first_name},\n\n"
+                f"Your reservation for {updated_instance.restaurant.name} has been cancelled successfully.\n\n"
+                f"Refund Details:\n"
+                f"- Policy: {reason}\n"
+                f"- Status: {refund_status}\n"
+            )
+            if refund_id:
+                email_message += f"- Refund ID: {refund_id}\n"
+            
+            email_message += (
+                f"\nReservation ID: SNX-RES-{updated_instance.id}\n"
+                f"Restaurant: {updated_instance.restaurant.name}\n"
+                f"Date: {updated_instance.reservation_date}\n"
+                f"Time: {updated_instance.reservation_time}\n\n"
+                f"Thank you for choosing ServNex."
+            )
+
             try:
                 send_mail(
-                    subject=f"Reservation Cancellation Initiated - {updated_instance.restaurant.name}",
-                    message=f"Hello {updated_instance.user.first_name},\n\nYour cancelation request initiated , payment will refund within 24 h.\n\nReservation ID: SNX-RES-{updated_instance.id}\nRestaurant: {updated_instance.restaurant.name}\n\nThank you.",
+                    subject=f"Reservation Cancelled - {updated_instance.restaurant.name}",
+                    message=email_message,
                     from_email=settings.EMAIL_HOST_USER,
                     recipient_list=[updated_instance.user.email],
                     fail_silently=True

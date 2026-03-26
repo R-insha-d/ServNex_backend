@@ -137,7 +137,9 @@ class TableReservationSerializer(serializers.ModelSerializer):
         from datetime import date
 
         # Check reservation date is not in the past
-        if data.get('reservation_date') and data['reservation_date'] < date.today():
+        # [RELAXED] Skip this check if we are CANCELLING the reservation
+        status = data.get('status')
+        if status != 'cancelled' and data.get('reservation_date') and data['reservation_date'] < date.today():
             raise serializers.ValidationError("Reservation date cannot be in the past.")
 
         # Table availability check based on capacity
@@ -151,7 +153,7 @@ class TableReservationSerializer(serializers.ModelSerializer):
         elif guests <= 8: capacity = 8
         else: capacity = 10
 
-        if restaurant and reservation_date:
+        if status != 'cancelled' and restaurant and reservation_date:
             # Check how many tables of THIS capacity are already booked for this date
             qs = TableReservation.objects.filter(
                 restaurant=restaurant,
@@ -159,7 +161,7 @@ class TableReservationSerializer(serializers.ModelSerializer):
                 table_capacity=capacity
             ).filter(
                 db_models.Q(payment_status='paid') | db_models.Q(status__in=['Your Table Is Ready', 'completed'])
-            )
+            ).exclude(status='cancelled')
             if self.instance:
                 qs = qs.exclude(pk=self.instance.pk)
 

@@ -1,3 +1,5 @@
+import razorpay
+from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticatedOrReadOnly, IsAuthenticated, AllowAny
@@ -5,6 +7,11 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.generics import ListAPIView
 from rest_framework.decorators import action
 from rest_framework import status
+
+from django.utils import timezone
+from datetime import datetime, time, timedelta
+from django.contrib.contenttypes.models import ContentType
+from payments.models import Payment
 
 from .models import HotelDataModel, Booking, Room, HotelGallery, NearbyAttraction, Review, Coupon # Import Coupon
 from django.db.models import Q, Sum
@@ -18,6 +25,10 @@ from .serializers import (
     ReviewSerializer,
     CouponSerializer,
 )
+
+# Initialize Razorpay Client
+client = razorpay.Client(auth=(settings.RAZR_KEY_ID, settings.RAZR_KEY_SECRET))
+
 
 class HotelListAPIView(ListAPIView):
     permission_classes = [IsAuthenticatedOrReadOnly]
@@ -191,16 +202,83 @@ class BookingViewSet(ModelViewSet):
         if booking.status in ['cancelled', 'completed']:
             return Response({"error": f"Booking is already {booking.status}"}, status=status.HTTP_400_BAD_REQUEST)
             
+        # ── REFUND POLICY CALCULATOR ──
+        # Assumption: Standard check-in time is 12:00 PM (noon)
+        check_in_dt = timezone.make_aware(datetime.combine(booking.check_in, time(12, 0)))
+        now = timezone.now()
+        time_diff = check_in_dt - now
+        hours_before = time_diff.total_seconds() / 3600
+
+        refund_percentage = 0.0
+        reason = "No refund (cancellation < 12 hours before check-in)"
+
+        if hours_before >= 24:
+            refund_percentage = 1.0 # 100%
+            reason = "Full refund (> 24 hours before check-in)"
+        elif hours_before >= 12:
+            refund_percentage = 0.5 # 50%
+            reason = "Partial refund (50% - cancelled between 12-24 hours)"
+        
+        refund_status = "Not applicable"
+        refund_id = None
+
+        # Try to process refund if amount > 0 and payment is successful
+        if refund_percentage > 0:
+            try:
+                # Find the payment record
+                content_type = ContentType.objects.get_for_model(Booking)
+                payment = Payment.objects.filter(
+                    content_type=content_type,
+                    object_id=booking.id,
+                    status='success'
+                ).first()
+
+                if payment and payment.razorpay_payment_id:
+                    # Calculate refund amount in paise
+                    refund_amount = int(float(payment.amount) * refund_percentage * 100)
+                    
+                    # Call Razorpay Refund API
+                    refund_resp = client.payment.refund(payment.razorpay_payment_id, {
+                        "amount": refund_amount,
+                        "notes": {"reason": reason, "booking_id": booking.id}
+                    })
+                    
+                    refund_id = refund_resp.get('id')
+                    refund_status = f"Initiated ({int(refund_percentage*100)}% refund)"
+                else:
+                    refund_status = "Skipped (No successful payment found)"
+            except Exception as e:
+                print(f"Razorpay Refund Error: {e}")
+                refund_status = f"Failed to automate ({str(e)})"
+
+        # Update status
         booking.status = 'cancelled'
         booking.save()
 
         # Send Email to User
         from django.core.mail import send_mail
         from django.conf import settings
+        
+        email_message = (
+            f"Hello {booking.user.first_name},\n\n"
+            f"Your booking for {booking.hotel.name} has been cancelled successfully.\n\n"
+            f"Refund Details:\n"
+            f"- Policy: {reason}\n"
+            f"- Status: {refund_status}\n"
+        )
+        if refund_id:
+            email_message += f"- Refund ID: {refund_id}\n"
+        
+        email_message += (
+            f"\nBooking ID: SNX-HTL-{booking.id}\n"
+            f"Hotel: {booking.hotel.name}\n\n"
+            f"Thank you for choosing ServNex."
+        )
+
         try:
             send_mail(
-                subject=f"Booking Cancellation Initiated - {booking.hotel.name}",
-                message=f"Hello {booking.user.first_name},\n\nYour cancelation request initiated , payment will refund within 24 h.\n\nBooking ID: SNX-HTL-{booking.id}\nHotel: {booking.hotel.name}\n\nThank you.",
+                subject=f"Booking Cancelled - {booking.hotel.name}",
+                message=email_message,
                 from_email=settings.EMAIL_HOST_USER,
                 recipient_list=[booking.user.email],
                 fail_silently=True
@@ -208,7 +286,16 @@ class BookingViewSet(ModelViewSet):
         except Exception as e:
             print(f"Failed to send email: {e}")
 
-        return Response({"status": "Booking cancelled successfully"})
+        return Response({
+            "status": "Booking cancelled successfully",
+            "refund_details": {
+                "percentage": refund_percentage,
+                "reason": reason,
+                "status": refund_status,
+                "refund_id": refund_id
+            }
+        })
+
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def fail_payment(self, request, pk=None):

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import RestaurantDataModel, TableReservation
+from .models import RestaurantDataModel, TableReservation, Review, ReviewImage
 
 
 @admin.register(RestaurantDataModel)
@@ -7,7 +7,7 @@ class RestaurantAdmin(admin.ModelAdmin):
     list_display = ['name', 'city', 'area', 'badge', 'cuisine_type', 'price_range', 'rating', 'total_tables']
     list_filter = ['badge', 'city', 'price_range', 'cuisine_type']
     search_fields = ['name', 'city', 'area', 'description']
-    readonly_fields = ['created_at', 'updated_at']
+    readonly_fields = ['id', 'total_tables', 'created_at', 'updated_at']
     
     fieldsets = (
         ('Basic Information', {
@@ -31,9 +31,9 @@ class RestaurantAdmin(admin.ModelAdmin):
 
 @admin.register(TableReservation)
 class TableReservationAdmin(admin.ModelAdmin):
-    list_display = ['user', 'restaurant', 'reservation_date', 'reservation_time', 'number_of_guests', 'tables_reserved', 'status', 'created_at']
-    list_filter = ['status', 'reservation_date', 'restaurant']
-    search_fields = ['user__email', 'user__first_name', 'user__last_name', 'restaurant__name']
+    list_display = ['id', 'user', 'restaurant', 'reservation_date', 'reservation_time', 'status', 'payment_status', 'created_at']
+    list_filter = ['status', 'payment_status', 'reservation_date', 'restaurant']
+    search_fields = ['user__email', 'user__first_name', 'restaurant__name', 'razorpay_order_id']
     readonly_fields = ['created_at', 'tables_reserved']
     date_hierarchy = 'reservation_date'
     
@@ -44,7 +44,14 @@ class TableReservationAdmin(admin.ModelAdmin):
         ('Guest Information', {
             'fields': ('number_of_guests', 'tables_reserved', 'special_requests')
         }),
-        ('Status', {
-            'fields': ('status', 'created_at')
+        ('Payment & Status', {
+            'fields': ('status', 'payment_status', 'razorpay_order_id', 'created_at')
         }),
     )
+
+@admin.register(Review)
+class RestaurantReviewAdmin(admin.ModelAdmin):
+    list_display = ('user', 'restaurant', 'rating', 'created_at')
+    list_filter = ('rating', 'created_at')
+
+admin.site.register(ReviewImage)

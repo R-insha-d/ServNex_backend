@@ -1,61 +1,42 @@
 from django.contrib import admin
-from hotels.models import HotelDataModel, Booking, Room, NearbyAttraction, Coupon # Import Coupon
+from hotels.models import (
+    HotelDataModel, Booking, Room, NearbyAttraction, 
+    Coupon, HotelGallery, Review, ReviewImage
+)
 from django.utils.html import format_html
 
-# customize the admin display for HotelDataModel (optional but recommended)
 class HotelAdmin(admin.ModelAdmin):
-    list_display = ('name', 'city', 'price', 'owner','image_preview','image_preview2','image_preview3','image_preview4')
+    list_display = ('name', 'city', 'price', 'badge', 'owner', 'image_preview')
     search_fields = ('name', 'city')
     list_filter = ('city', 'badge')
 
-    def image_preview(self,obj):
+    def image_preview(self, obj):
         if obj.image:
-            return format_html('<img src="{}" width="100" height="100" style="object-fit: cover;"/>',
-                               obj.image.url
-                               )
-        return " No image !!!"
-    image_preview.short_description = 'image'
+            return format_html('<img src="{}" width="50" height="50" style="object-fit: cover; border-radius: 4px;"/>', obj.image.url)
+        return "No image"
+    image_preview.short_description = 'Preview'
 
-    def image_preview2(self,obj):
-        if obj.room_image1:
-            return format_html('<img src="{}" width="100" height="100" style="object-fit: cover;"/>',
-                               obj.room_image1.url
-                               )
-        return " No image !!!"
-    image_preview2.short_description = 'image'
-
-    def image_preview3(self,obj):
-        if obj.room_image2:
-            return format_html('<img src="{}" width="100" height="100" style="object-fit: cover;"/>',
-                               obj.room_image2.url
-                               )
-        return " No image !!!"
-    image_preview3.short_description = 'image'
-
-    def image_preview4(self,obj):
-        if obj.environment_image:
-            return format_html('<img src="{}" width="100" height="100" style="object-fit: cover;"/>',
-                               obj.environment_image.url
-                               )
-        return " No image !!!"
-    image_preview4.short_description = 'image'
-
-# customize the admin display for Booking
 class BookingAdmin(admin.ModelAdmin):
-    list_display = ('user', 'hotel', 'status', 'total_original_price', 'discount_amount', 'final_price')
-    list_filter = ('status', 'check_in', 'hotel')
-    search_fields = ('user__username', 'hotel__name')
+    list_display = ('id', 'user', 'hotel', 'status', 'payment_status', 'final_price', 'check_in')
+    list_filter = ('status', 'payment_status', 'check_in', 'hotel')
+    search_fields = ('user__email', 'hotel__name', 'razorpay_order_id')
     date_hierarchy = 'check_in'
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         if request.user.is_superuser:
             return qs
-        my_hotels = HotelDataModel.objects.filter(owner=request.user)
-        return qs.filter(hotel__in=my_hotels)
+        return qs.filter(hotel__owner=request.user)
+
+@admin.register(Review)
+class ReviewAdmin(admin.ModelAdmin):
+    list_display = ('user', 'hotel', 'rating', 'created_at')
+    list_filter = ('rating', 'created_at')
 
 admin.site.register(HotelDataModel, HotelAdmin)
 admin.site.register(Booking, BookingAdmin)
 admin.site.register(Room)
 admin.site.register(NearbyAttraction)
 admin.site.register(Coupon)
+admin.site.register(HotelGallery)
+admin.site.register(ReviewImage)

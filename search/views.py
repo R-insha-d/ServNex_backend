@@ -153,6 +153,8 @@ class SuggestionsAPIView(APIView):
     """
     def get(self, request):
         query = request.query_params.get('q', '')
+        search_type = request.query_params.get('type', 'all')
+        
         if not query or len(query) < 2:
             return Response([], status=status.HTTP_200_OK)
 
@@ -161,68 +163,71 @@ class SuggestionsAPIView(APIView):
         for kw in ['near ', 'nearby ', 'around ', ' me', 'hotels', 'hotel', 'restaurants', 'restaurant']:
             search_query = search_query.replace(kw, '').strip()
         
-        # If query is just "near me", we use "me"? No, better to fall back to original if empty or too short
         query = search_query if len(search_query) >= 2 else query
 
         suggestions = []
         added_labels = set()
 
-        # 1. Keywords (Priority) - Scan both models
-        # Use a more efficient way to collect unique keywords
+        # 1. Keywords (Priority)
         current_kw = set()
         
         # Hotel Keywords
-        h_kw = HotelDataModel.objects.filter(keywords__icontains=query).values_list('keywords', flat=True).distinct()
-        for k_str in h_kw:
-            if k_str:
-                for p in [k.strip() for k in k_str.split(',') if query.lower() in k.lower()]:
-                    if p.lower() not in current_kw:
-                        current_kw.add(p.lower())
-                        suggestions.append({'label': f"✨ {p}", 'value': p, 'type': 'keyword'})
-                        added_labels.add(p.lower())
-                    if len(suggestions) > 10: break
-            if len(suggestions) > 10: break
+        if search_type in ['all', 'hotel']:
+            h_kw = HotelDataModel.objects.filter(keywords__icontains=query).values_list('keywords', flat=True).distinct()
+            for k_str in h_kw:
+                if k_str:
+                    for p in [k.strip() for k in k_str.split(',') if query.lower() in k.lower()]:
+                        if p.lower() not in current_kw:
+                            current_kw.add(p.lower())
+                            suggestions.append({'label': f"✨ {p}", 'value': p, 'type': 'keyword'})
+                            added_labels.add(p.lower())
+                        if len(suggestions) > 10: break
+                if len(suggestions) > 10: break
 
         # Restaurant Keywords
-        r_kw = RestaurantDataModel.objects.filter(keywords__icontains=query).values_list('keywords', flat=True).distinct()
-        for k_str in r_kw:
-            if k_str:
-                for p in [k.strip() for k in k_str.split(',') if query.lower() in k.lower()]:
-                    if p.lower() not in current_kw:
-                        current_kw.add(p.lower())
-                        suggestions.append({'label': f"✨ {p}", 'value': p, 'type': 'keyword'})
-                        added_labels.add(p.lower())
-                    if len(suggestions) > 15: break
-            if len(suggestions) > 15: break
-
-        # 2. Hotel Names (limit to 3 if keywords already found)
-        hotels = HotelDataModel.objects.filter(name__icontains=query)[:5]
-        for h in hotels:
-            if h.name.lower() not in added_labels:
-                suggestions.append({'label': h.name, 'value': h.name, 'type': 'hotel'})
-                added_labels.add(h.name.lower())
+        if search_type in ['all', 'restaurant']:
+            r_kw = RestaurantDataModel.objects.filter(keywords__icontains=query).values_list('keywords', flat=True).distinct()
+            for k_str in r_kw:
+                if k_str:
+                    for p in [k.strip() for k in k_str.split(',') if query.lower() in k.lower()]:
+                        if p.lower() not in current_kw:
+                            current_kw.add(p.lower())
+                            suggestions.append({'label': f"✨ {p}", 'value': p, 'type': 'keyword'})
+                            added_labels.add(p.lower())
+                        if len(suggestions) > 20: break
                 if len(suggestions) > 20: break
 
-        # 3. Restaurant Names
-        restaurants = RestaurantDataModel.objects.filter(name__icontains=query)[:5]
-        for r in restaurants:
-            if r.name.lower() not in added_labels:
-                suggestions.append({'label': r.name, 'value': r.name, 'type': 'restaurant'})
-                added_labels.add(r.name.lower())
-                if len(suggestions) > 25: break
+        # 2. Names
+        if search_type in ['all', 'hotel']:
+            hotels = HotelDataModel.objects.filter(name__icontains=query)[:5]
+            for h in hotels:
+                if h.name.lower() not in added_labels:
+                    suggestions.append({'label': h.name, 'value': h.name, 'type': 'hotel'})
+                    added_labels.add(h.name.lower())
+                    if len(suggestions) > 25: break
 
-        # 4. Cities
-        cities = HotelDataModel.objects.filter(city__icontains=query).values_list('city', flat=True).distinct()[:3]
-        for c in cities:
-            if c.lower() not in added_labels:
-                suggestions.append({'label': f"📍 {c}", 'value': c, 'type': 'city'})
-                added_labels.add(c.lower())
+        if search_type in ['all', 'restaurant']:
+            restaurants = RestaurantDataModel.objects.filter(name__icontains=query)[:5]
+            for r in restaurants:
+                if r.name.lower() not in added_labels:
+                    suggestions.append({'label': r.name, 'value': r.name, 'type': 'restaurant'})
+                    added_labels.add(r.name.lower())
+                    if len(suggestions) > 30: break
 
-        # 5. Cuisine Types
-        cuisines = RestaurantDataModel.objects.filter(cuisine_type__icontains=query).values_list('cuisine_type', flat=True).distinct()[:3]
-        for cui in cuisines:
-            if cui.lower() not in added_labels:
-                suggestions.append({'label': f"🍽️ {cui}", 'value': cui, 'type': 'cuisine'})
-                added_labels.add(cui.lower())
+        # 3. Cities
+        if search_type in ['all', 'hotel']:
+            cities = HotelDataModel.objects.filter(city__icontains=query).values_list('city', flat=True).distinct()[:3]
+            for c in cities:
+                if c.lower() not in added_labels:
+                    suggestions.append({'label': f"📍 {c}", 'value': c, 'type': 'city'})
+                    added_labels.add(c.lower())
+
+        # 4. Cuisine Types
+        if search_type in ['all', 'restaurant']:
+            cuisines = RestaurantDataModel.objects.filter(cuisine_type__icontains=query).values_list('cuisine_type', flat=True).distinct()[:3]
+            for cui in cuisines:
+                if cui.lower() not in added_labels:
+                    suggestions.append({'label': f"🍽️ {cui}", 'value': cui, 'type': 'cuisine'})
+                    added_labels.add(cui.lower())
 
         return Response(suggestions, status=status.HTTP_200_OK)

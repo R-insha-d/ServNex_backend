@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from django.conf import settings
 
 # Get the user model (works with custom User models too)
 User = get_user_model()
@@ -31,6 +32,11 @@ class RestaurantDataModel(models.Model):
     area = models.CharField(max_length=500)
     badge = models.CharField(max_length=50, choices=BADGE_CHOICES, null=True, blank=True)
     cuisine_type = models.CharField(max_length=100, help_text="e.g., Italian, Chinese, Indian, Mexican", null=True, blank=True)
+    
+    # New fields for operational status
+    is_open = models.BooleanField(default=True)
+    opening_time = models.TimeField(default="09:00:00")
+    closing_time = models.TimeField(default="22:00:00")
     
     # New fields for search and location
     latitude = models.FloatField(null=True, blank=True)
@@ -90,20 +96,17 @@ class TableReservation(models.Model):
         ("cancelled", "cancelled"),
     ]
 
-    user = models.ForeignKey(
-        User, 
-        on_delete=models.CASCADE, 
-        related_name='restaurant_reservations'
+    PAYMENT_CHOICES = (
+        ('pending', 'Pending'),
+        ('paid', 'Paid'),
+        ('failed', 'Failed'),
     )
-    restaurant = models.ForeignKey(
-        RestaurantDataModel, 
-        on_delete=models.CASCADE, 
-        related_name='reservations'
-    )
-    
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='restaurant_reservations')
+    restaurant = models.ForeignKey(RestaurantDataModel, on_delete=models.CASCADE, related_name='reservations')
     reservation_date = models.DateField()
     reservation_time = models.TimeField()
-    number_of_guests = models.PositiveIntegerField(default=2)
+    number_of_guests = models.PositiveIntegerField(default=4)
     table_capacity = models.PositiveIntegerField(default=4, help_text="The capacity of the table booked (4, 6, 8, 10)")
     tables_reserved = models.PositiveIntegerField(default=1)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Table Pending')
@@ -111,21 +114,24 @@ class TableReservation(models.Model):
     razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)
     payment_status = models.CharField(
         max_length=20, 
-        choices=[('pending', 'Pending'), ('paid', 'Paid'), ('failed', 'Failed')], 
+        choices=PAYMENT_CHOICES, 
         default='pending'
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
-        # Determine table capacity based on guests if not provided
-        if not self.table_capacity:
-            if self.number_of_guests <= 4: self.table_capacity = 4
-            elif self.number_of_guests <= 6: self.table_capacity = 6
-            elif self.number_of_guests <= 8: self.table_capacity = 8
-            else: self.table_capacity = 10
-            
-        self.tables_reserved = 1 # One table of selected capacity
-        
+        # Always recalculate table capacity from number of guests
+        if self.number_of_guests <= 4:
+            self.table_capacity = 4
+        elif self.number_of_guests <= 6:
+            self.table_capacity = 6
+        elif self.number_of_guests <= 8:
+            self.table_capacity = 8
+        else:
+            self.table_capacity = 10
+
+        self.tables_reserved = 1  # One table of selected capacity
+
         super().save(*args, **kwargs)
 
     def __str__(self):

@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db.models import Q
 from .models import RestaurantDataModel, TableReservation, Review
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from .serializers import RestaurantSerializer, TableReservationSerializer,ReviewSerializer
 import razorpay
 from django.conf import settings
@@ -196,7 +196,7 @@ class RestaurantReservationDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 class RestaurantMeView(APIView):
     permission_classes = [permissions.IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get(self, request):
         try:
@@ -231,7 +231,7 @@ class RestaurantDashboardReservationsView(APIView):
             payment_status='paid'
         ).exclude(
             status__in=['completed', 'cancelled']
-        ).select_related('user', 'restaurant')
+        ).order_by('reservation_date', 'reservation_time').select_related('user', 'restaurant')
         serializer = TableReservationSerializer(reservations, many=True)
         return Response(serializer.data)
 

@@ -1,6 +1,9 @@
-import math
 from django.db import models as db_models
+from django.db.models import Q
+from django.contrib.auth import get_user_model
+from django.conf import settings
 from rest_framework import serializers
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from .models import RestaurantDataModel, TableReservation, Review, ReviewImage
 
 
@@ -17,7 +20,7 @@ class RestaurantSerializer(serializers.ModelSerializer):
             'cuisine_type', 'price_range', 'average_cost_for_two', 
             'tables_4_capacity', 'tables_6_capacity', 'tables_8_capacity', 'tables_10_capacity',
             'total_tables', 'description', 'rating', 'image', 'menu_image', 'interior_image',
-            'latitude', 'longitude', 'keywords',
+            'latitude', 'longitude', 'keywords', 'is_open', 'opening_time', 'closing_time',
             'created_at', 'updated_at', 'reviews_count', 'average_rating',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'owner', 'owner_name', 'reviews_count', 'average_rating', 'total_tables']
@@ -67,6 +70,24 @@ class ReviewSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         reservation = data.get('reservation')
+        restaurant = data.get('restaurant')
+        reservation_time = data.get('reservation_time')
+        
+        if restaurant and reservation_time:
+            # Check if restaurant is explicitly closed
+            if hasattr(restaurant, 'is_open') and not restaurant.is_open:
+                raise serializers.ValidationError("This restaurant is currently closed for reservations.")
+            
+            # Check operating hours
+            if hasattr(restaurant, 'opening_time') and hasattr(restaurant, 'closing_time'):
+                opening = restaurant.opening_time
+                closing = restaurant.closing_time
+                
+                if not (opening <= reservation_time <= closing):
+                    raise serializers.ValidationError(
+                        f"Reservation time must be between {opening.strftime('%I:%M %p')} and {closing.strftime('%I:%M %p')}."
+                    )
+
         # Only allow review if reservation is completed
         if reservation and reservation.status not in ['Your Table Is Ready', 'completed', 'paid']:
             raise serializers.ValidationError("You can only review a confirmed or completed reservation.")
@@ -99,6 +120,8 @@ class TableReservationSerializer(serializers.ModelSerializer):
     has_review = serializers.SerializerMethodField()
     review_data = serializers.SerializerMethodField()
 
+    payment_info = serializers.SerializerMethodField()
+
     class Meta:
         model = TableReservation
         fields = [
@@ -107,7 +130,7 @@ class TableReservationSerializer(serializers.ModelSerializer):
             'reservation_date', 'reservation_time',
             'number_of_guests', 'tables_reserved', 'status', 'special_requests',
             'razorpay_order_id', 'payment_status',
-            'has_review', 'review_data',
+            'has_review', 'review_data', 'payment_info',
             'created_at'
         ]
         read_only_fields = [
@@ -116,6 +139,18 @@ class TableReservationSerializer(serializers.ModelSerializer):
             'razorpay_order_id', 'payment_status',
             'has_review', 'review_data'
         ]
+
+    def get_payment_info(self, obj):
+        if obj.razorpay_order_id:
+            from payments.models import Payment
+            p = Payment.objects.filter(razorpay_order_id=obj.razorpay_order_id).first()
+            if p:
+                return {
+                    'amount': str(p.amount),
+                    'transaction_id': p.razorpay_payment_id or '—',
+                    'currency': p.currency,
+                }
+        return None
 
     def get_has_review(self, obj):
         """Returns True if this reservation already has a review"""
@@ -142,8 +177,16 @@ class TableReservationSerializer(serializers.ModelSerializer):
         if status != 'cancelled' and data.get('reservation_date') and data['reservation_date'] < date.today():
             raise serializers.ValidationError("Reservation date cannot be in the past.")
 
-        # Table availability check based on capacity
+        # Operating hours check
         restaurant = data.get('restaurant')
+        reservation_time = data.get('reservation_time')
+        if restaurant and reservation_time:
+            if not (restaurant.opening_time <= reservation_time <= restaurant.closing_time):
+                raise serializers.ValidationError(
+                    f"The restaurant is only open between {restaurant.opening_time.strftime('%I:%M %p')} and {restaurant.closing_time.strftime('%I:%M %p')}. Please select a valid time."
+                )
+
+        # Table availability check based on capacity
         reservation_date = data.get('reservation_date')
         guests = data.get('number_of_guests', 1)
         
@@ -160,7 +203,7 @@ class TableReservationSerializer(serializers.ModelSerializer):
                 reservation_date=reservation_date,
                 table_capacity=capacity
             ).filter(
-                db_models.Q(payment_status='paid') | db_models.Q(status__in=['Your Table Is Ready', 'completed'])
+                Q(payment_status='paid') | Q(status__in=['Your Table Is Ready', 'completed'])
             ).exclude(status='cancelled')
             if self.instance:
                 qs = qs.exclude(pk=self.instance.pk)

@@ -5,6 +5,7 @@ from django.db.models import Q
 from .models import RestaurantDataModel, TableReservation, Review
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from .serializers import RestaurantSerializer, TableReservationSerializer,ReviewSerializer
+from notifications.models import Notification
 import razorpay
 from django.conf import settings
 from django.utils import timezone
@@ -58,7 +59,26 @@ class TableReservationListCreateView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         # Automatically set the user to the logged-in user
-        serializer.save(user=self.request.user)
+        reservation = serializer.save(user=self.request.user)
+        
+        # Notify User
+        Notification.objects.create(
+            user=reservation.user,
+            title="Reservation Received",
+            message=f"Your table reservation for {reservation.restaurant.name} on {reservation.reservation_date} at {reservation.reservation_time} has been received.",
+            notification_type='reservation',
+            link=f"/my-bookings" 
+        )
+        
+        # Notify Restaurant Owner
+        if reservation.restaurant.owner:
+            Notification.objects.create(
+                user=reservation.restaurant.owner,
+                title="New Reservation",
+                message=f"New table reservation for {reservation.restaurant.name} from {reservation.user.first_name or reservation.user.username}.",
+                notification_type='reservation',
+                link=f"/restaurant-dashboard"
+            )
 
 
 class UserReservationsView(generics.ListAPIView):
@@ -107,6 +127,16 @@ class RestaurantReservationDetailView(generics.RetrieveUpdateDestroyAPIView):
             raise ValidationError(detail=f"Reservation is already {instance.status}")
         
         updated_instance = serializer.save()
+        
+        # Check for status changes to notify user
+        if updated_instance.status == 'Your Table Is Ready' and instance.status != 'Your Table Is Ready':
+            Notification.objects.create(
+                user=updated_instance.user,
+                title="Table Ready!",
+                message=f"Your table at {updated_instance.restaurant.name} is now ready. Please head to the restaurant.",
+                notification_type='reservation',
+                link=f"/my-bookings"
+            )
         
         if updated_instance.status == 'cancelled':
             # ── REFUND POLICY CALCULATOR ──
@@ -159,6 +189,25 @@ class RestaurantReservationDetailView(generics.RetrieveUpdateDestroyAPIView):
                 except Exception as e:
                     print(f"Razorpay Refund Error: {e}")
                     refund_status = f"Failed to automate ({str(e)})"
+
+            # Notify User of cancellation
+            Notification.objects.create(
+                user=updated_instance.user,
+                title="Reservation Cancelled",
+                message=f"Your reservation for {updated_instance.restaurant.name} has been cancelled. Refund status: {refund_status}.",
+                notification_type='reservation',
+                link=f"/my-bookings"
+            )
+            
+            # Notify Owner of cancellation (if cancelled by user)
+            if self.request.user == updated_instance.user and updated_instance.restaurant.owner:
+                Notification.objects.create(
+                    user=updated_instance.restaurant.owner,
+                    title="Reservation Cancelled",
+                    message=f"The reservation for {updated_instance.restaurant.name} by {updated_instance.user.first_name or updated_instance.user.username} has been cancelled.",
+                    notification_type='reservation',
+                    link=f"/restaurant-dashboard"
+                )
 
             # Send Email
             from django.core.mail import send_mail

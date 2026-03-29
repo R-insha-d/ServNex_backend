@@ -14,6 +14,7 @@ from django.contrib.contenttypes.models import ContentType
 from payments.models import Payment
 
 from .models import HotelDataModel, Booking, Room, HotelGallery, NearbyAttraction, Review, Coupon # Import Coupon
+from notifications.models import Notification
 from django.db.models import Q, Sum
 from .serializers import (
     HotelCreateSerializer, 
@@ -81,7 +82,26 @@ class BookingViewSet(ModelViewSet):
 
     def perform_create(self, serializer):
         # The serializer.validate() we wrote earlier handles the availability check!
-        serializer.save(user=self.request.user)
+        booking = serializer.save(user=self.request.user)
+        
+        # Notify User
+        Notification.objects.create(
+            user=booking.user,
+            title="Booking Received",
+            message=f"Your booking for {booking.hotel.name} has been received and is pending confirmation.",
+            notification_type='booking',
+            link=f"/my-bookings"
+        )
+        
+        # Notify Hotel Owner
+        if booking.hotel.owner:
+            Notification.objects.create(
+                user=booking.hotel.owner,
+                title="New Booking",
+                message=f"You have a new booking request for {booking.hotel.name} from {booking.user.first_name or booking.user.username}.",
+                notification_type='booking',
+                link=f"/admin-dashboard"
+            )
 
     @action(detail=False, methods=['post'])
     def price_preview(self, request):
@@ -191,6 +211,16 @@ class BookingViewSet(ModelViewSet):
         
         booking.status = 'completed'
         booking.save()
+        
+        # Notify User
+        Notification.objects.create(
+            user=booking.user,
+            title="Booking Completed",
+            message=f"Your stay at {booking.hotel.name} has been marked as completed. We hope you enjoyed your stay!",
+            notification_type='booking',
+            link=f"/my-bookings"
+        )
+        
         return Response({"status": "Booking marked as completed"})
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
@@ -254,6 +284,25 @@ class BookingViewSet(ModelViewSet):
         # Update status
         booking.status = 'cancelled'
         booking.save()
+
+        # Notify User
+        Notification.objects.create(
+            user=booking.user,
+            title="Booking Cancelled",
+            message=f"Your booking for {booking.hotel.name} has been cancelled. Refund status: {refund_status}.",
+            notification_type='booking',
+            link=f"/my-bookings"
+        )
+        
+        # Notify Owner
+        if booking.hotel.owner:
+            Notification.objects.create(
+                user=booking.hotel.owner,
+                title="Booking Cancelled",
+                message=f"The booking for {booking.hotel.name} by {booking.user.first_name or booking.user.username} has been cancelled.",
+                notification_type='booking',
+                link=f"/hotel-dashboard"
+            )
 
         # Send Email to User
         from django.core.mail import send_mail

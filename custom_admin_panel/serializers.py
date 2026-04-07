@@ -12,16 +12,24 @@ class AdminUserSerializer(serializers.ModelSerializer):
         read_only_fields = ('date_joined',)
 
 class AdminHotelSerializer(serializers.ModelSerializer):
-    owner_email = serializers.EmailField(source='owner.email', read_only=True)
+    owner_email = serializers.SerializerMethodField()
+
     class Meta:
         model = HotelDataModel
         fields = '__all__'
 
+    def get_owner_email(self, obj):
+        return obj.owner.email if obj.owner else "No Owner"
+
 class AdminRestaurantSerializer(serializers.ModelSerializer):
-    owner_email = serializers.EmailField(source='owner.email', read_only=True)
+    owner_email = serializers.SerializerMethodField()
+
     class Meta:
         model = RestaurantDataModel
         fields = '__all__'
+
+    def get_owner_email(self, obj):
+        return obj.owner.email if obj.owner else "No Owner"
 
 class AdminBookingSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source='user.email', read_only=True)

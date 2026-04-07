@@ -3,7 +3,8 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     AdminUserViewSet, AdminHotelViewSet, 
     AdminRestaurantViewSet, AdminBookingViewSet,
-    AdminReservationViewSet, GlobalStatsView
+    AdminReservationViewSet, GlobalStatsView,
+    AdminAnalyticsView
 )
 
 router = DefaultRouter()
@@ -16,4 +17,5 @@ router.register(r'reservations', AdminReservationViewSet, basename='admin-reserv
 urlpatterns = [
     path('', include(router.urls)),
     path('stats/', GlobalStatsView.as_view(), name='admin-stats'),
+    path('analytics/', AdminAnalyticsView.as_view(), name='admin-analytics'),
 ]

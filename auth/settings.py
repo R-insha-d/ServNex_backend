@@ -57,7 +57,8 @@ INSTALLED_APPS = [
     'restaurants',
     'payments',
     'search',
-    'notifications'
+    'notifications',
+    'custom_admin_panel',
 ]
 
 MIDDLEWARE = [

@@ -188,6 +188,8 @@ class LoginView(APIView):
                     "email": user.email,
                     "phone": user.phone,
                     "role": getattr(user, "role", None),
+                    "is_staff": user.is_staff,
+                    "is_superuser": user.is_superuser,
                     "profile_image": user.profile_image.url if user.profile_image else None,
                 },
                 "access": str(refresh.access_token),

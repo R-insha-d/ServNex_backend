@@ -8,13 +8,44 @@ from django.utils import timezone
 import datetime
 from hotels.models import HotelDataModel, Booking
 from restaurants.models import RestaurantDataModel, TableReservation
+from hotels.models import HotelDataModel, Booking, Review as HotelReview
+from restaurants.models import RestaurantDataModel, TableReservation, Review as RestaurantReview
+from payments.models import Payment
+from .models import AdminActivity
 from .serializers import (
     AdminUserSerializer, AdminHotelSerializer, 
     AdminRestaurantSerializer, AdminBookingSerializer,
-    AdminReservationSerializer
+    AdminReservationSerializer, AdminPaymentSerializer,
+    AdminHotelReviewSerializer, AdminRestaurantReviewSerializer,
+    AdminActivitySerializer
 )
 
 User = get_user_model()
+
+class LogActionMixin:
+    def log_activity(self, action, instance):
+        try:
+            AdminActivity.objects.create(
+                admin_user=self.request.user,
+                action=action,
+                model_name=instance.__class__.__name__,
+                object_id=str(instance.id),
+                object_repr=str(instance)
+            )
+        except Exception as e:
+            print(f"Failed to log activity: {e}")
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        self.log_activity('CREATE', instance)
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        self.log_activity('UPDATE', instance)
+
+    def perform_destroy(self, instance):
+        self.log_activity('DELETE', instance)
+        instance.delete()
 
 class IsSuperAdmin(permissions.BasePermission):
     def has_permission(self, request, view):
@@ -95,7 +126,7 @@ class AdminAnalyticsView(APIView):
             }
         })
 
-class AdminUserViewSet(viewsets.ModelViewSet):
+class AdminUserViewSet(LogActionMixin, viewsets.ModelViewSet):
     queryset = User.objects.all().order_by('-id')
     serializer_class = AdminUserSerializer
     permission_classes = [IsSuperAdmin]
@@ -103,7 +134,7 @@ class AdminUserViewSet(viewsets.ModelViewSet):
     search_fields = ['first_name', 'email', 'phone']
     ordering_fields = ['id', 'date_joined', 'first_name']
 
-class AdminHotelViewSet(viewsets.ModelViewSet):
+class AdminHotelViewSet(LogActionMixin, viewsets.ModelViewSet):
     queryset = HotelDataModel.objects.all().order_by('-id')
     serializer_class = AdminHotelSerializer
     permission_classes = [IsSuperAdmin]
@@ -111,7 +142,7 @@ class AdminHotelViewSet(viewsets.ModelViewSet):
     search_fields = ['name', 'city', 'area', 'description']
     ordering_fields = ['id', 'name', 'price']
 
-class AdminRestaurantViewSet(viewsets.ModelViewSet):
+class AdminRestaurantViewSet(LogActionMixin, viewsets.ModelViewSet):
     queryset = RestaurantDataModel.objects.all().order_by('-id')
     serializer_class = AdminRestaurantSerializer
     permission_classes = [IsSuperAdmin]
@@ -119,7 +150,7 @@ class AdminRestaurantViewSet(viewsets.ModelViewSet):
     search_fields = ['name', 'city', 'area']
     ordering_fields = ['id', 'name', 'rating']
 
-class AdminBookingViewSet(viewsets.ModelViewSet):
+class AdminBookingViewSet(LogActionMixin, viewsets.ModelViewSet):
     queryset = Booking.objects.all().order_by('-id')
     serializer_class = AdminBookingSerializer
     permission_classes = [IsSuperAdmin]
@@ -127,10 +158,39 @@ class AdminBookingViewSet(viewsets.ModelViewSet):
     search_fields = ['id', 'user__email', 'hotel__name']
     ordering_fields = ['id', 'created_at', 'final_price']
 
-class AdminReservationViewSet(viewsets.ModelViewSet):
+class AdminReservationViewSet(LogActionMixin, viewsets.ModelViewSet):
     queryset = TableReservation.objects.all().order_by('-id')
     serializer_class = AdminReservationSerializer
     permission_classes = [IsSuperAdmin]
     filterset_fields = ['status']
     search_fields = ['id', 'user__email', 'restaurant__name']
     ordering_fields = ['id', 'created_at']
+
+class AdminPaymentViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Payment.objects.all().order_by('-id')
+    serializer_class = AdminPaymentSerializer
+    permission_classes = [IsSuperAdmin]
+    filterset_fields = ['status', 'currency']
+    search_fields = ['razorpay_order_id', 'user__email']
+    ordering_fields = ['id', 'created_at', 'amount']
+
+class AdminHotelReviewViewSet(LogActionMixin, viewsets.ModelViewSet):
+    queryset = HotelReview.objects.all().order_by('-id')
+    serializer_class = AdminHotelReviewSerializer
+    permission_classes = [IsSuperAdmin]
+    filterset_fields = ['rating']
+    search_fields = ['hotel__name', 'user__email', 'comment']
+    ordering_fields = ['id', 'created_at', 'rating']
+
+class AdminRestaurantReviewViewSet(LogActionMixin, viewsets.ModelViewSet):
+    queryset = RestaurantReview.objects.all().order_by('-id')
+    serializer_class = AdminRestaurantReviewSerializer
+    permission_classes = [IsSuperAdmin]
+    filterset_fields = ['rating']
+    search_fields = ['restaurant__name', 'user__email', 'comment']
+    ordering_fields = ['id', 'created_at', 'rating']
+
+class AdminActivityViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = AdminActivity.objects.all().order_by('-timestamp')
+    serializer_class = AdminActivitySerializer
+    permission_classes = [IsSuperAdmin]

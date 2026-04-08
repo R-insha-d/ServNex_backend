@@ -53,8 +53,8 @@ class GlobalSearchAPIView(APIView):
                         Q(keywords__icontains=search_query)
                     )
 
-                # Apply city filter only when no coordinates are provided
-                if city_param and city_param.lower() != "all" and city_param != "Current Location" and lat is None:
+                # Apply city filter if provided
+                if city_param and city_param.lower() != "all" and city_param != "Current Location":
                     hotel_qs = hotel_qs.filter(city__iexact=city_param)
 
                 hotel_data = HotelListSerializer(hotel_qs, many=True, context={'request': request}).data
@@ -111,7 +111,7 @@ class GlobalSearchAPIView(APIView):
                         Q(keywords__icontains=search_query)
                     )
 
-                if city_param and city_param.lower() != "all" and city_param != "Current Location" and lat is None:
+                if city_param and city_param.lower() != "all" and city_param != "Current Location":
                     rest_qs = rest_qs.filter(city__iexact=city_param)
 
                 rest_data = RestaurantSerializer(rest_qs, many=True, context={'request': request}).data

@@ -5,6 +5,7 @@ class Notification(models.Model):
     NOTIFICATION_TYPES = [
         ('booking', 'Booking'),
         ('reservation', 'Reservation'),
+        ('failure', 'Failure'),
         ('info', 'Information'),
     ]
 

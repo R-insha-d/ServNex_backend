@@ -82,26 +82,7 @@ class BookingViewSet(ModelViewSet):
 
     def perform_create(self, serializer):
         # The serializer.validate() we wrote earlier handles the availability check!
-        booking = serializer.save(user=self.request.user)
-        
-        # Notify User
-        Notification.objects.create(
-            user=booking.user,
-            title="Booking Received",
-            message=f"Your booking for {booking.hotel.name} has been received and is pending confirmation.",
-            notification_type='booking',
-            link=f"/my-bookings"
-        )
-        
-        # Notify Hotel Owner
-        if booking.hotel.owner:
-            Notification.objects.create(
-                user=booking.hotel.owner,
-                title="New Booking",
-                message=f"You have a new booking request for {booking.hotel.name} from {booking.user.first_name or booking.user.username}.",
-                notification_type='booking',
-                link=f"/admin-dashboard"
-            )
+        serializer.save(user=self.request.user)
 
     @action(detail=False, methods=['post'])
     def price_preview(self, request):

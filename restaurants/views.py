@@ -59,26 +59,7 @@ class TableReservationListCreateView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         # Automatically set the user to the logged-in user
-        reservation = serializer.save(user=self.request.user)
-        
-        # Notify User
-        Notification.objects.create(
-            user=reservation.user,
-            title="Reservation Received",
-            message=f"Your table reservation for {reservation.restaurant.name} on {reservation.reservation_date} at {reservation.reservation_time} has been received.",
-            notification_type='reservation',
-            link=f"/my-bookings" 
-        )
-        
-        # Notify Restaurant Owner
-        if reservation.restaurant.owner:
-            Notification.objects.create(
-                user=reservation.restaurant.owner,
-                title="New Reservation",
-                message=f"New table reservation for {reservation.restaurant.name} from {reservation.user.first_name or reservation.user.username}.",
-                notification_type='reservation',
-                link=f"/restaurant-dashboard"
-            )
+        serializer.save(user=self.request.user)
 
 
 class UserReservationsView(generics.ListAPIView):

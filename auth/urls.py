@@ -28,6 +28,8 @@ urlpatterns = [
     path('api/',include('payments.urls')),
     path('api/notifications/', include('notifications.urls')),
     path('api/admin/', include('custom_admin_panel.urls')),
+    path('accounts/', include('allauth.urls'))
+
 ]
 
 if settings.DEBUG:

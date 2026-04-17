@@ -25,6 +25,7 @@ from users.views import (
     UserDeleteView,
     OtpVerificationView,
     ResendSignupOTPView,
+    GoogleLoginView,
 )
 
 router = DefaultRouter()
@@ -42,6 +43,7 @@ urlpatterns = [
     path("update-role/", UpdateRoleView.as_view(),name="update-role"),
     path("update-profile/", UserProfileUpdateView.as_view(), name="update-profile"),
     path("delete-profile/", UserDeleteView.as_view(), name="delete-profile"),
+    path("google-login/", GoogleLoginView.as_view(), name="google-login"),
     path("api/business-profile/", BusinessProfileView.as_view(), name="business-profile"),
 ]
 

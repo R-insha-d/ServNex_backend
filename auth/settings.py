@@ -60,6 +60,18 @@ INSTALLED_APPS = [
     'search',
     'notifications',
     'custom_admin_panel',
+    'allauth',
+    'allauth.account',
+    'allauth.socialaccount',
+    'allauth.socialaccount.providers.google',
+]
+
+SITE_ID = 1
+
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+    'allauth.account.auth_backends.AuthenticationBackend',
+    'users.authentication.EmailBackend', 
 ]
 
 MIDDLEWARE = [
@@ -71,6 +83,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'allauth.account.middleware.AccountMiddleware'
 ]
 
 CORS_ALLOWED_ORIGINS = [
@@ -93,10 +106,10 @@ REST_FRAMEWORK = {
     ),
 }
 
-AUTHENTICATION_BACKENDS = [
-    'users.authentication.EmailBackend',  # custom backend
-    'django.contrib.auth.backends.ModelBackend',  # fallback
-]
+# AUTHENTICATION_BACKENDS = [
+#     'users.authentication.EmailBackend',  # custom backend
+#     'django.contrib.auth.backends.ModelBackend',  # fallback
+# ]
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
@@ -186,3 +199,21 @@ AUTH_USER_MODEL="users.User"
 RAZR_KEY_ID= config('RAZR_KEY_ID')
 
 RAZR_KEY_SECRET= config('RAZR_KEY_SECRET')
+
+
+# Social Account Settings
+SOCIALACCOUNT_LOGIN_ON_GET = True  # Skips an extra confirmation page
+LOGIN_REDIRECT_URL = "http://localhost:5173/" # Redirects back to your Vite app
+ACCOUNT_LOGOUT_REDIRECT_URL = "http://localhost:5173/"
+
+SOCIALACCOUNT_PROVIDERS = {
+    'google': {
+        'APP': {
+            'client_id': config('GOOGLE_CLIENT_ID'),
+            'secret': config('GOOGLE_SECRET'),
+            'key': ''
+        },
+        'SCOPE': ['profile', 'email'],
+        'AUTH_PARAMS': {'access_type': 'online'},
+    }
+}

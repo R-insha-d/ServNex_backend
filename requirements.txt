@@ -2,8 +2,12 @@ asgiref==3.11.1
 beautifulsoup4==4.14.3
 bs4==0.0.2
 certifi==2026.1.4
+cffi==2.0.0
 charset-normalizer==3.4.4
+cryptography==46.0.7
+dj-rest-auth==7.2.0
 Django==6.0.2
+django-allauth==65.16.0
 django-cors-headers==4.9.0
 django-filter==25.2
 djangorestframework==3.16.1
@@ -13,6 +17,7 @@ markdown-it-py==4.0.0
 mdurl==0.1.2
 parse_pip_search==0.0.1
 pillow==12.1.0
+pycparser==3.0
 Pygments==2.19.2
 PyJWT==2.11.0
 python-decouple==3.8

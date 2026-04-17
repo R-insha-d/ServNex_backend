@@ -8,6 +8,8 @@ from django.core.mail import send_mail
 from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken
 import random
+from google.oauth2 import id_token
+from google.auth.transport import requests
 
 from .models import PasswordResetOTP, PendingUser
 from .serializers import (
@@ -145,27 +147,6 @@ class ResendSignupOTPView(APIView):
             return Response({"message": "New OTP sent to email."}, status=status.HTTP_200_OK)
         except PendingUser.DoesNotExist:
             return Response({"error": "No pending registration found for this email."}, status=status.HTTP_404_NOT_FOUND)
-        
-    # def create(self, request):
-    #     serializer = RegisterSerializer(data=request.data)
-
-    #     if serializer.is_valid():
-    #         user_obj = serializer.save()
-    #         refresh = RefreshToken.for_user(user_obj)
-    #         return Response(
-    #             {
-    #                 "message": "User registered successfully",
-    #                 "user": serializer.data,
-    #                 "access": str(refresh.access_token),
-    #                 "refresh": str(refresh)
-    #             },
-    #             status=status.HTTP_201_CREATED
-    #         )
-
-    #     return Response(
-    #         serializer.errors,
-    #         status=status.HTTP_400_BAD_REQUEST
-    #     )
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
@@ -197,7 +178,6 @@ class LoginView(APIView):
             }, status=status.HTTP_200_OK)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 
 class SendOTPView(APIView):
     permission_classes = [AllowAny]  # ← Add this
@@ -235,7 +215,6 @@ class SendOTPView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-
 class VerifyOTPView(APIView):
     permission_classes = [AllowAny]  # ← Add this
     
@@ -260,7 +239,6 @@ class VerifyOTPView(APIView):
         otp_obj.save()
 
         return Response({"message": "OTP verified"}, status=status.HTTP_200_OK)
-
 
 class ResetPasswordView(APIView):
     permission_classes = [AllowAny]  # ← Add this
@@ -305,20 +283,13 @@ class BusinessProfileView(APIView):
         user = request.user
         data = request.data
         
-        # Determine model based on user role or category if sent (frontend sends category in step 1, but this API is called at end)
-        # Frontend updates role first, so rely on user.role
-        
         if user.role == 'Hotel':
-            # Check if hotel already exists? Maybe allow multiple? For now assume one profile per user or create new.
-            # BusinessLogin.jsx doesn't send badges/prices yet, so we use defaults/nulls.
-            
             hotel = HotelDataModel.objects.create(
                 owner=user,
                 name=data.get('name'),
                 city=data.get('city'),
                 area=data.get('area'),
                 description=data.get('description'),
-                # Optional fields will be null/default
             )
             return Response({"message": "Hotel profile created", "id": hotel.id}, status=status.HTTP_201_CREATED)
             
@@ -344,7 +315,6 @@ class UserProfileUpdateView(APIView):
         if serializer.is_valid():
             user = serializer.save()
             
-            # Construct explicit response to match LoginView format
             return Response({
                 "message": "Profile updated successfully",
                 "user": {
@@ -366,3 +336,70 @@ class UserDeleteView(APIView):
         user = request.user
         user.delete()
         return Response({"message": "User account deleted successfully"}, status=status.HTTP_204_NO_CONTENT)
+
+class GoogleLoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        token = request.data.get("credential")
+        access_token = request.data.get("access_token")
+        
+        if not token and not access_token:
+            return Response({"error": "Credential or access_token is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            client_id = "517231673876-5rciu4craia4j2kd6lr9mp4htoi3toad.apps.googleusercontent.com"
+            
+            if token:
+                # Flow for ID Token (credential)
+                idinfo = id_token.verify_oauth2_token(token, requests.Request(), client_id)
+                if idinfo['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:
+                    raise ValueError('Wrong issuer.')
+                email = idinfo['email']
+                first_name = idinfo.get('given_name', idinfo.get('name', ''))
+                picture = idinfo.get('picture', None)
+            else:
+                # Flow for Access Token
+                import requests as py_requests
+                response = py_requests.get(f"https://www.googleapis.com/oauth2/v3/userinfo?access_token={access_token}")
+                if response.status_code != 200:
+                    raise ValueError("Invalid access token")
+                user_info = response.json()
+                email = user_info['email']
+                first_name = user_info.get('given_name', user_info.get('name', ''))
+                picture = user_info.get('picture', None)
+
+            # Use get_or_create to find or create the user by email
+            user, created = User.objects.get_or_create(email=email, defaults={
+                'first_name': first_name,
+                'is_verified': True,
+                'is_active': True,
+                'role': 'User'
+            })
+
+            if not user.is_active:
+                return Response({"error": "User account is suspended"}, status=status.HTTP_403_FORBIDDEN)
+
+            refresh = RefreshToken.for_user(user)
+
+            return Response({
+                "message": "Login successful",
+                "user": {
+                    "id": user.id,
+                    "first_name": user.first_name,
+                    "email": user.email,
+                    "phone": user.phone,
+                    "role": user.role,
+                    "is_staff": user.is_staff,
+                    "is_superuser": user.is_superuser,
+                    "profile_image": user.profile_image.url if user.profile_image else picture,
+                },
+                "access": str(refresh.access_token),
+                "refresh": str(refresh)
+            }, status=status.HTTP_200_OK)
+
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            print(f"Google Login Exception: {str(e)}")
+            return Response({"error": "Failed to verify Google account"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

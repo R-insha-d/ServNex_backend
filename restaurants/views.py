@@ -107,10 +107,11 @@ class RestaurantReservationDetailView(generics.RetrieveUpdateDestroyAPIView):
         if instance.status in ['cancelled', 'completed']:
             raise ValidationError(detail=f"Reservation is already {instance.status}")
         
+        old_status = instance.status
         updated_instance = serializer.save()
         
         # Check for status changes to notify user
-        if updated_instance.status == 'Your Table Is Ready' and instance.status != 'Your Table Is Ready':
+        if updated_instance.status == 'Your Table Is Ready' and old_status != 'Your Table Is Ready':
             Notification.objects.create(
                 user=updated_instance.user,
                 title="Table Ready!",

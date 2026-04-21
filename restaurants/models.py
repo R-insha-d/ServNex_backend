@@ -130,7 +130,8 @@ class TableReservation(models.Model):
         else:
             self.table_capacity = 10
 
-        self.tables_reserved = 1  # One table of selected capacity
+        import math
+        self.tables_reserved = math.ceil(self.number_of_guests / self.table_capacity)
 
         super().save(*args, **kwargs)
 

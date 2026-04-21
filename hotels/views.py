@@ -3,6 +3,7 @@ from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticatedOrReadOnly, IsAuthenticated, AllowAny
+from .permissions import IsHotelOwnerOrReadOnly, IsReviewOwnerOrReadOnly
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.generics import ListAPIView
 from rest_framework.decorators import action
@@ -99,11 +100,11 @@ class BookingViewSet(ModelViewSet):
             'discount_reason': data.get('discount_reason')
         })
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def eligible_for_review(self, request):
         hotel_id = request.query_params.get('hotel_id')
         if not hotel_id:
-            return Response({"error": "hotel_id is required"}, status=400)
+            return Response({"error": "hotel_id is required"}, status=status.HTTP_400_BAD_REQUEST)
         
         # Find latest completed/confirmed booking for this user/hotel that has no review
         booking = Booking.objects.filter(
@@ -117,7 +118,7 @@ class BookingViewSet(ModelViewSet):
                 "id": booking.id,
                 "room_type": booking.room_type_name
             })
-        return Response({"id": None})
+        return Response({"message": "No eligible booking found", "id": None})
 
     # Optional: Custom action to check availability without booking
     @action(detail=False, methods=['get'], permission_classes=[AllowAny])
@@ -131,11 +132,18 @@ class BookingViewSet(ModelViewSet):
         if not all([hotel_id, check_in, check_out]):
              return Response({"error": "Missing parameters"}, status=status.HTTP_400_BAD_REQUEST)
         
-        if check_in >= check_out:
+        from datetime import datetime
+        try:
+            check_in_date = datetime.strptime(check_in, '%Y-%m-%d').date()
+            check_out_date = datetime.strptime(check_out, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if check_in_date >= check_out_date:
             return Response({"error": "Check-out date must be after check-in date."}, status=status.HTTP_400_BAD_REQUEST)
         
         from django.utils import timezone
-        if check_in < str(timezone.localtime().date()):
+        if check_in_date < timezone.localtime().date():
             return Response({"error": "Check-in date cannot be in the past."}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
@@ -143,46 +151,53 @@ class BookingViewSet(ModelViewSet):
         except HotelDataModel.DoesNotExist:
              return Response({"error": "Hotel not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        # [NEW] Room Logic
-        if room_id:
-             try:
-                 room = Room.objects.get(id=room_id, hotel=hotel)
-                 total_capacity = room.total_rooms
-             except Room.DoesNotExist:
-                 return Response({"error": "Room not found"}, status=status.HTTP_404_NOT_FOUND)
-        else:
-             # Calculate sum of all rooms for the hotel
-             total_capacity = Room.objects.filter(hotel=hotel).aggregate(total=Sum('total_rooms'))['total'] or 0
-
         # Check existing bookings (only confirmed or recent/active pending ones block slots)
         from django.utils import timezone
         from datetime import timedelta
         pending_timeout = timezone.now() - timedelta(minutes=5)
 
-        # A booking blocks a room if:
-        # 1. It is 'confirmed'
-        # 2. It is 'pending' but NOT yet 'failed' AND was created recently (last 30 mins)
         # A booking blocks a room only if it is 'confirmed' or already 'paid'
         blocking_filter = Q(status='confirmed') | (Q(status='pending') & Q(payment_status='paid'))
-
-        filters = Q(hotel=hotel) & blocking_filter & Q(check_in__lt=check_out) & Q(check_out__gt=check_in)
+        filters = Q(hotel=hotel) & blocking_filter & Q(check_in__lt=check_out_date) & Q(check_out__gt=check_in_date)
         
         if room_id:
+            try:
+                room = Room.objects.get(id=room_id, hotel=hotel)
+            except Room.DoesNotExist:
+                return Response({"error": "Room not found"}, status=status.HTTP_404_NOT_FOUND)
+            
             filters &= Q(room_id=room_id)
-
-        overlapping_rooms = Booking.objects.filter(filters).aggregate(total=Sum('rooms_booked'))['total'] or 0
-
-        if (overlapping_rooms + rooms_needed) <= total_capacity:
-             remaining = total_capacity - overlapping_rooms
-             return Response({
-                 "available": True,
-                 "remaining_rooms": remaining
-             })
+            overlapping_rooms = Booking.objects.filter(filters).aggregate(total=Sum('rooms_booked'))['total'] or 0
+            
+            remaining = room.total_rooms - overlapping_rooms
+            if remaining >= rooms_needed:
+                return Response({
+                    "available": True,
+                    "remaining_rooms": remaining
+                })
+            else:
+                return Response({
+                    "available": False,
+                    "remaining_rooms": max(0, remaining)
+                })
         else:
-             return Response({
-                 "available": False,
-                 "remaining_rooms": max(0, total_capacity - overlapping_rooms)
-             })
+            # Iterate over all rooms to see if ANY room type has enough space
+            rooms = Room.objects.filter(hotel=hotel)
+            for r in rooms:
+                overlapping = Booking.objects.filter(
+                    filters & Q(room=r)
+                ).aggregate(total=Sum('rooms_booked'))['total'] or 0
+                
+                remaining = r.total_rooms - overlapping
+                if remaining >= rooms_needed:
+                    return Response({
+                        "available": True,
+                        "remaining_rooms": remaining,
+                        "room_type_available": r.room_type
+                    })
+            
+            # If loop finishes, no single room type can handle the request
+            return Response({"available": False, "remaining_rooms": 0})
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def complete_booking(self, request, pk=None):
@@ -337,25 +352,7 @@ class BookingViewSet(ModelViewSet):
         booking.save()
         return Response({"status": "Payment status updated to failed"})
 
-    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
-    def eligible_for_review(self, request):
-        hotel_id = request.query_params.get('hotel_id')
-        if not hotel_id:
-            return Response({"error": "Missing hotel_id"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Check for confirmed/completed booking for this user and hotel
-        booking = Booking.objects.filter(
-            user=request.user, 
-            hotel_id=hotel_id, 
-            status__in=['confirmed', 'completed']
-        ).first()
-        
-        if booking:
-            # Also check if they ALREADY left a review
-            if hasattr(booking, 'review'):
-                return Response({"message": "Already reviewed"}, status=status.HTTP_200_OK)
-            return Response({"id": booking.id})
-        return Response({"message": "No eligible booking found"}, status=status.HTTP_200_OK)
+
     
 
 class HotelDashboardView(APIView):
@@ -402,7 +399,7 @@ class HotelDashboardView(APIView):
         return Response(data)
 
 class RoomViewSet(ModelViewSet):
-    permission_classes = [IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAuthenticatedOrReadOnly, IsHotelOwnerOrReadOnly]
     serializer_class = RoomSerializer
 
     def get_queryset(self):
@@ -413,7 +410,7 @@ class RoomViewSet(ModelViewSet):
         return queryset
 
 class HotelGalleryViewSet(ModelViewSet):
-    permission_classes = [IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAuthenticatedOrReadOnly, IsHotelOwnerOrReadOnly]
     serializer_class = HotelGallerySerializer
 
     def get_queryset(self):
@@ -425,7 +422,7 @@ class HotelGalleryViewSet(ModelViewSet):
 
 
 class NearbyAttractionViewSet(ModelViewSet):
-    permission_classes = [IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAuthenticatedOrReadOnly, IsHotelOwnerOrReadOnly]
     serializer_class = NearbyAttractionSerializer
 
     def get_queryset(self):
@@ -447,8 +444,10 @@ class ReviewViewSet(ModelViewSet):
     serializer_class = ReviewSerializer
 
     def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+        if self.action == 'create':
             return [IsAuthenticated()]
+        elif self.action in ['update', 'partial_update', 'destroy']:
+            return [IsAuthenticated(), IsReviewOwnerOrReadOnly()]
         return [AllowAny()]
 
     def get_queryset(self):

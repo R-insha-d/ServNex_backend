@@ -5,10 +5,6 @@ from django.db.models import Q, Sum
 
 User = get_user_model()
 
-class CouponSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Coupon
-        fields = ['id', 'code', 'discount_percent', 'valid_from', 'valid_to', 'is_active', 'hotel']
 
 class HotelCreateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -168,36 +164,37 @@ class BookingSerializer(serializers.ModelSerializer):
             requested_rooms = min_rooms
             data['rooms_booked'] = requested_rooms # Ensure it's saved correctly
 
-        # 2. Get total rooms for this hotel or specific room type
+        # 2. Room check
         room = data.get('room')
+        
+        from django.utils import timezone
+        from datetime import timedelta
+
+        # A booking blocks a room only if it is 'confirmed' or already 'paid'
+        blocking_filter = Q(status='confirmed') | (Q(status='pending') & Q(payment_status='paid'))
+        filters = Q(hotel=hotel) & blocking_filter & Q(check_in__lt=check_out) & Q(check_out__gt=check_in)
+
         if room:
-            total_rooms = room.total_rooms
-        else:
-            # Calculate sum of all rooms for the hotel
-            total_rooms = Room.objects.filter(hotel=hotel).aggregate(total=Sum('total_rooms'))['total'] or 0
-
-        if total_rooms > 0:
-            # 3. Sum rooms already booked for overlapping dates
-            from django.utils import timezone
-            from datetime import timedelta
-            pending_timeout = timezone.now() - timedelta(minutes=5)
-
-            # A booking blocks a room only if it is 'confirmed' or already 'paid'
-            blocking_filter = Q(status='confirmed') | (Q(status='pending') & Q(payment_status='paid'))
-
-            filters = Q(hotel=hotel) & blocking_filter & Q(check_in__lt=check_out) & Q(check_out__gt=check_in)
-            
-            # If a specific room is selected, only check bookings for that room
-            if room:
-                filters &= Q(room=room)
-                
+            filters &= Q(room=room)
             overlapping_rooms = Booking.objects.filter(filters).aggregate(total=Sum('rooms_booked'))['total'] or 0
-
-            # 4. Check if enough rooms are left
-            available_now = total_rooms - overlapping_rooms
+            available_now = room.total_rooms - overlapping_rooms
             if requested_rooms > available_now:
                 raise serializers.ValidationError(
-                    f"Only {available_now} rooms are available for these dates. You requested {requested_rooms}."
+                    f"Only {max(0, available_now)} rooms are available for these dates. You requested {requested_rooms}."
+                )
+        else:
+            # Check if any single room type can satisfy the requested rooms
+            rooms = Room.objects.filter(hotel=hotel)
+            room_available = False
+            for r in rooms:
+                overlapping = Booking.objects.filter(filters & Q(room=r)).aggregate(total=Sum('rooms_booked'))['total'] or 0
+                if (r.total_rooms - overlapping) >= requested_rooms:
+                    room_available = True
+                    break
+            
+            if not room_available:
+                raise serializers.ValidationError(
+                    f"No single room type has {requested_rooms} rooms available for these dates."
                 )
 
         # [NEW] Discount and Pricing Logic
@@ -221,7 +218,7 @@ class BookingSerializer(serializers.ModelSerializer):
         # 3. Custom Coupon code
         coupon_code = data.pop('coupon_code', None)
         if coupon_code:
-            from .models import Coupon
+
             try:
                 coupon = Coupon.objects.get(
                     code__iexact=coupon_code, 
@@ -318,7 +315,7 @@ class ReviewSerializer(serializers.ModelSerializer):
 class CouponSerializer(serializers.ModelSerializer):
     class Meta:
         model = Coupon
-        fields = '__all__'
+        fields = ['id', 'code', 'discount_percent', 'valid_from', 'valid_to', 'is_active', 'hotel']
 
     def validate_valid_from(self, value):
         from django.utils import timezone

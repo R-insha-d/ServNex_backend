@@ -114,11 +114,13 @@ class HotelListSerializer(serializers.ModelSerializer):
 class BookingSerializer(serializers.ModelSerializer):
     # Nested serializer to get full hotel details (Read Only)
     hotel_details = HotelListSerializer(source='hotel', read_only=True)
+    # Add room_type as an alias for room_type_name for frontend compatibility
+    room_type = serializers.CharField(source='room_type_name', read_only=True)
 
     class Meta:
         model = Booking
-        fields = ['id', 'hotel', 'hotel_details', 'check_in', 'check_out', 'status', 'number_of_guests', 'rooms_booked', 'room', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data', 'total_original_price', 'discount_amount', 'final_price', 'coupon_code', 'discount_reason', 'created_at']
-        read_only_fields = ['user', 'status', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data', 'total_original_price', 'discount_amount', 'final_price', 'discount_reason', 'created_at']
+        fields = ['id', 'hotel', 'hotel_details', 'check_in', 'check_out', 'status', 'number_of_guests', 'rooms_booked', 'room', 'room_type', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data', 'total_original_price', 'discount_amount', 'final_price', 'coupon_code', 'discount_reason', 'created_at']
+        read_only_fields = ['user', 'status', 'room_type', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data', 'total_original_price', 'discount_amount', 'final_price', 'discount_reason', 'created_at']
 
     coupon_code = serializers.CharField(write_only=True, required=False, allow_blank=True)
 

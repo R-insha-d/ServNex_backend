@@ -42,6 +42,7 @@ class RestaurantDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.AllowAny]  # Anyone can view
 
     def get_permissions(self):
+        3
         # Only owner can update/delete
         if self.request.method in ['PUT', 'PATCH', 'DELETE']:
             return [permissions.IsAuthenticated()]
@@ -335,7 +336,7 @@ class RestaurantAvailabilityView(APIView):
                 table_capacity=cap
             ).filter(
                 Q(payment_status='paid') | Q(status__in=['Your Table Is Ready', 'completed'])
-            ).count()
+            ).exclude(status='cancelled').count()
             
             total = getattr(restaurant, f'tables_{cap}_capacity', 0)
             availability[cap] = max(0, total - booked)

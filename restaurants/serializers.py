@@ -128,14 +128,14 @@ class TableReservationSerializer(serializers.ModelSerializer):
             'id', 'user', 'user_name', 'user_email', 'user_phone',
             'restaurant', 'restaurant_name', 'restaurant_image', 'menu_image',
             'reservation_date', 'reservation_time',
-            'number_of_guests', 'tables_reserved', 'status', 'special_requests',
+            'number_of_guests', 'table_capacity', 'tables_reserved', 'status', 'special_requests',
             'razorpay_order_id', 'payment_status',
             'has_review', 'review_data', 'payment_info',
             'created_at'
         ]
         read_only_fields = [
             'id', 'created_at', 'user', 'user_name', 'restaurant_name',
-            'restaurant_image', 'menu_image', 'tables_reserved',
+            'restaurant_image', 'menu_image',
             'razorpay_order_id', 'payment_status',
             'has_review', 'review_data'
         ]
@@ -169,13 +169,20 @@ class TableReservationSerializer(serializers.ModelSerializer):
         return None
 
     def validate(self, data):
-        from datetime import date
+        from datetime import datetime, date as date_obj, time as time_obj, timedelta
+        from django.utils import timezone
 
-        # Check reservation date is not in the past
-        # [RELAXED] Skip this check if we are CANCELLING the reservation
+        # Check reservation date and time are not in the past
         status = data.get('status')
-        if status != 'cancelled' and data.get('reservation_date') and data['reservation_date'] < date.today():
-            raise serializers.ValidationError("Reservation date cannot be in the past.")
+        res_date = data.get('reservation_date')
+        res_time = data.get('reservation_time')
+        
+        if status != 'cancelled' and res_date and res_time:
+            # res_date is a date object, res_time is a time object
+            res_datetime = timezone.make_aware(datetime.combine(res_date, res_time))
+            # Allow a 1-minute buffer for reservations made "just now"
+            if res_datetime < (timezone.now() - timedelta(minutes=1)):
+                raise serializers.ValidationError("Reservation date and time cannot be in the past.")
 
         # Operating hours check
         restaurant = data.get('restaurant')
@@ -190,11 +197,19 @@ class TableReservationSerializer(serializers.ModelSerializer):
         reservation_date = data.get('reservation_date')
         guests = data.get('number_of_guests', 1)
         
-        # Determine capacity type
-        if guests <= 4: capacity = 4
-        elif guests <= 6: capacity = 6
-        elif guests <= 8: capacity = 8
-        else: capacity = 10
+        # Use provided table_capacity or derive it
+        capacity = data.get('table_capacity')
+        if not capacity:
+            if guests <= 4: capacity = 4
+            elif guests <= 6: capacity = 6
+            elif guests <= 8: capacity = 8
+            else: capacity = 10
+        
+        # Ensure guests don't exceed capacity
+        if status != 'cancelled' and guests > capacity:
+            raise serializers.ValidationError(
+                f"A {capacity}-guest table cannot accommodate {guests} guests. Please select a larger table or reduce guest count."
+            )
 
         if status != 'cancelled' and restaurant and reservation_date:
             # Check how many tables of THIS capacity are already booked for this date

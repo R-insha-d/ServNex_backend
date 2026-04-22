@@ -120,17 +120,19 @@ class TableReservation(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
-        # Always recalculate table capacity from number of guests
-        if self.number_of_guests <= 4:
-            self.table_capacity = 4
-        elif self.number_of_guests <= 6:
-            self.table_capacity = 6
-        elif self.number_of_guests <= 8:
-            self.table_capacity = 8
-        else:
-            self.table_capacity = 10
+        import math
+        # If table_capacity is not provided, calculate it from number_of_guests
+        if not self.table_capacity:
+            if self.number_of_guests <= 4: self.table_capacity = 4
+            elif self.number_of_guests <= 6: self.table_capacity = 6
+            elif self.number_of_guests <= 8: self.table_capacity = 8
+            else: self.table_capacity = 10
 
-        self.tables_reserved = 1  # One table of selected capacity
+        if not self.tables_reserved:
+            self.tables_reserved = 1
+
+        if not self.number_of_guests or self.number_of_guests == 4:
+            self.number_of_guests = self.table_capacity
 
         super().save(*args, **kwargs)
 
@@ -173,4 +175,4 @@ class ReviewImage(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"Image for {self.review}"
+        return f"Image for {self.review}"

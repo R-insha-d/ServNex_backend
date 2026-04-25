@@ -394,6 +394,8 @@ class HotelDashboardView(APIView):
                 "room_type": booking.room_type_name, # [NEW]
                 "booked_at": booking.created_at,
                 "rooms_booked": booking.rooms_booked,
+                "guest_name": booking.guest_name,
+                "guest_phone": booking.guest_phone,
             })
             
         return Response(data)

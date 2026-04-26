@@ -13,22 +13,60 @@ from datetime import datetime, time, timedelta
 from django.contrib.contenttypes.models import ContentType
 from payments.models import Payment
 
+from math import radians, cos, sin, asin, sqrt
+
 # Initialize Razorpay Client
 client = razorpay.Client(auth=(settings.RAZR_KEY_ID, settings.RAZR_KEY_SECRET))
 
 
 class RestaurantListCreateView(generics.ListCreateAPIView):
-    """
-    GET: List all restaurants
-    POST: Create a new restaurant (business owners only)
-    """
-    queryset = RestaurantDataModel.objects.all()
     serializer_class = RestaurantSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]  # Authenticated users can create, anyone can view
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+    def get_queryset(self):
+        queryset = RestaurantDataModel.objects.all()
+
+        lat = self.request.query_params.get('lat')
+        lng = self.request.query_params.get('lng')
+        radius = self.request.query_params.get('radius', 10)  # default 10 km
+
+        # 🔍 If location is provided → filter by distance
+        if lat and lng:
+            try:
+                lat = float(lat)
+                lng = float(lng)
+                radius = float(radius)
+
+                nearby_restaurants = []
+
+                for restaurant in queryset:
+                    # if restaurant.latitude and restaurant.longitude:
+                    if restaurant.latitude is not None and restaurant.longitude is not None:
+                        distance = haversine(
+                            lat, lng,
+                            restaurant.latitude,
+                            restaurant.longitude
+                        )
+
+                        if distance <= radius:
+                            restaurant.distance = round(distance, 2)
+                            nearby_restaurants.append(restaurant)
+
+                # 🔥 Sort by nearest
+                nearby_restaurants.sort(key=lambda x: x.distance)
+
+                return nearby_restaurants
+
+            except Exception as e:
+                print("Location filter error:", e)
+                return queryset
+
+        return queryset
 
     def perform_create(self, serializer):
-        # Automatically set the owner to the logged-in user
         serializer.save(owner=self.request.user)
+
+        # ----------------------------------------
 
 
 class RestaurantDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -311,9 +349,6 @@ class ReviewDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 
 class RestaurantAvailabilityView(APIView):
-    """
-    GET: Check availability for all table types (4, 6, 8, 10) for a given date
-    """
     permission_classes = [permissions.AllowAny]
 
     def get(self, request, pk):
@@ -326,19 +361,38 @@ class RestaurantAvailabilityView(APIView):
         except RestaurantDataModel.DoesNotExist:
             return Response({"error": "Restaurant not found"}, status=404)
 
-        capacities = [4, 6, 8, 10]
+        capacities = [2, 4, 6, 8, 10]
         availability = {}
-        
+
+        reservations = TableReservation.objects.filter(
+            restaurant=restaurant,
+            reservation_date=date_str
+        ).filter(
+            Q(payment_status='paid') | Q(status__in=['Your Table Is Ready', 'completed'])
+        ).exclude(status='cancelled')
+
         for cap in capacities:
-            booked = TableReservation.objects.filter(
-                restaurant=restaurant,
-                reservation_date=date_str,
-                table_capacity=cap
-            ).filter(
-                Q(payment_status='paid') | Q(status__in=['Your Table Is Ready', 'completed'])
-            ).exclude(status='cancelled').count()
-            
+            booked = 0
+
+            for res in reservations:
+                sel = res.table_selection or {}
+                booked += int(sel.get(str(cap), 0))
+
             total = getattr(restaurant, f'tables_{cap}_capacity', 0)
-            availability[cap] = max(0, total - booked)
-            
+            availability[str(cap)] = max(0, total - booked)  # 👈 string key
+
         return Response(availability)
+    
+
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371  # Earth radius in KM
+
+    dlat = radians(lat2 - lat1)
+    dlon = radians(lon2 - lon1)
+
+    a = sin(dlat / 2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2)**2
+    c = 2 * asin(sqrt(a))
+
+    return R * c
+
+

@@ -139,6 +139,7 @@ class Booking(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
 
     number_of_guests = models.PositiveIntegerField(default=2)
+    number_of_children = models.PositiveIntegerField(default=0)
     rooms_booked = models.PositiveIntegerField(default=1)
     room_type_name = models.CharField(max_length=100, null=True, blank=True)
     razorpay_order_id = models.CharField(max_length=100, blank=True, null=True)
@@ -161,13 +162,18 @@ class Booking(models.Model):
     )
     discount_reason = models.CharField(max_length=255, null=True, blank=True)
 
+    # Guest info (when booking for someone else)
+    guest_name = models.CharField(max_length=150, null=True, blank=True)
+    guest_phone = models.CharField(max_length=20, null=True, blank=True)
+
 
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
         # Auto-calculate rooms needed if not provided or too low (2 guests per room)
         import math
-        min_rooms = math.ceil(self.number_of_guests / 2)
+        capacity = self.room.adults if self.room else 2
+        min_rooms = math.ceil(self.number_of_guests / capacity)
         if not self.rooms_booked or self.rooms_booked < min_rooms:
             self.rooms_booked = min_rooms
         

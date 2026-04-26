@@ -47,20 +47,33 @@ class RestaurantDataModel(models.Model):
     average_cost_for_two = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     
     # Specific table counts by capacity
+    tables_2_capacity = models.PositiveIntegerField(default=5, help_text="Number of 2-guest tables")
+
     tables_4_capacity = models.PositiveIntegerField(default=5, help_text="Number of 4-guest tables")
     tables_6_capacity = models.PositiveIntegerField(default=2, help_text="Number of 6-guest tables")
     tables_8_capacity = models.PositiveIntegerField(default=2, help_text="Number of 8-guest tables")
     tables_10_capacity = models.PositiveIntegerField(default=1, help_text="Number of 10-guest tables")
 
+    # @property
+    # def total_tables(self):
+    #     return (self.tables_4_capacity + self.tables_6_capacity + 
+    #             self.tables_8_capacity + self.tables_10_capacity)
+
     @property
     def total_tables(self):
-        return (self.tables_4_capacity + self.tables_6_capacity + 
-                self.tables_8_capacity + self.tables_10_capacity)
+        return (
+        self.tables_2_capacity +
+        self.tables_4_capacity +
+        self.tables_6_capacity +
+        self.tables_8_capacity +
+        self.tables_10_capacity
+    )
 
     description = models.TextField()
     rating = models.DecimalField(max_digits=3, decimal_places=1, null=True, blank=True)
     
     image = models.ImageField(upload_to='restaurants/', null=True, blank=True)
+    extra_image = models.ImageField(upload_to='restaurant/extra', null=True, blank=True)
     menu_image = models.ImageField(upload_to='restaurants/menus/', blank=True, null=True)
     interior_image = models.ImageField(upload_to='restaurants/interiors/', blank=True, null=True)
 
@@ -107,7 +120,8 @@ class TableReservation(models.Model):
     reservation_date = models.DateField()
     reservation_time = models.TimeField()
     number_of_guests = models.PositiveIntegerField(default=4)
-    table_capacity = models.PositiveIntegerField(default=4, help_text="The capacity of the table booked (4, 6, 8, 10)")
+    # table_capacity = models.PositiveIntegerField(default=4, help_text="The capacity of the table booked (4, 6, 8, 10)")
+    table_capacity = models.PositiveIntegerField(null=True, blank=True)
     tables_reserved = models.PositiveIntegerField(default=1)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Table Pending')
     special_requests = models.TextField(blank=True, null=True, help_text="Any special requests or dietary restrictions")
@@ -119,14 +133,31 @@ class TableReservation(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
+    table_selection = models.JSONField(default=dict, blank=True)
+    total_seats = models.PositiveIntegerField(default=0)
+    has_baby = models.BooleanField(default=False)
+
     def save(self, *args, **kwargs):
         import math
         # If table_capacity is not provided, calculate it from number_of_guests
+        # if not self.table_capacity:
+        #     if self.number_of_guests <= 4: self.table_capacity = 4
+        #     elif self.number_of_guests <= 6: self.table_capacity = 6
+        #     elif self.number_of_guests <= 8: self.table_capacity = 8
+        #     else: self.table_capacity = 10
+
+
         if not self.table_capacity:
-            if self.number_of_guests <= 4: self.table_capacity = 4
-            elif self.number_of_guests <= 6: self.table_capacity = 6
-            elif self.number_of_guests <= 8: self.table_capacity = 8
-            else: self.table_capacity = 10
+            if self.number_of_guests <= 2:
+                self.table_capacity = 2
+            elif self.number_of_guests <= 4:
+                self.table_capacity = 4
+            elif self.number_of_guests <= 6:
+                self.table_capacity = 6
+            elif self.number_of_guests <= 8:
+                self.table_capacity = 8
+            else:
+                self.table_capacity = 10
 
         if not self.tables_reserved:
             self.tables_reserved = 1

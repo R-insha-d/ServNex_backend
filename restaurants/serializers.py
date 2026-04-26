@@ -12,21 +12,26 @@ class RestaurantSerializer(serializers.ModelSerializer):
     image = serializers.ImageField(required=False)
     menu_image = serializers.ImageField(required=False)
     interior_image = serializers.ImageField(required=False)
+    distance = serializers.SerializerMethodField()
 
     class Meta:
         model = RestaurantDataModel
         fields = [
             'id', 'owner', 'owner_name', 'name', 'city', 'area', 'badge',
-            'cuisine_type', 'price_range', 'average_cost_for_two', 
+            'cuisine_type', 'price_range', 'average_cost_for_two',
+            'tables_2_capacity', 
             'tables_4_capacity', 'tables_6_capacity', 'tables_8_capacity', 'tables_10_capacity',
-            'total_tables', 'description', 'rating', 'image', 'menu_image', 'interior_image',
+            'total_tables', 'description', 'rating', 'image', 'menu_image', 'interior_image','extra_image',
             'latitude', 'longitude', 'keywords', 'is_open', 'opening_time', 'closing_time',
-            'created_at', 'updated_at', 'reviews_count', 'average_rating',
+            'created_at', 'updated_at', 'reviews_count', 'average_rating', 'distance',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'owner', 'owner_name', 'reviews_count', 'average_rating', 'total_tables']
 
     reviews_count = serializers.SerializerMethodField()
     average_rating = serializers.SerializerMethodField()
+
+    def get_distance(self, obj):
+        return getattr(obj, 'distance', None)
 
     def get_reviews_count(self, obj):
         return obj.reviews.count()
@@ -59,7 +64,7 @@ class ReviewSerializer(serializers.ModelSerializer):
         model = Review
         fields = [
             'id', 'reservation', 'restaurant', 'user', 'user_name',
-            'user_email', 'rating', 'comment', 'created_at', 'images'
+            'user_email', 'rating', 'comment', 'created_at', 'images',
         ]
         read_only_fields = ['id', 'created_at', 'user', 'user_name', 'user_email', 'restaurant']
 
@@ -69,31 +74,54 @@ class ReviewSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, data):
-        reservation = data.get('reservation')
-        restaurant = data.get('restaurant')
-        reservation_time = data.get('reservation_time')
-        
-        if restaurant and reservation_time:
-            # Check if restaurant is explicitly closed
-            if hasattr(restaurant, 'is_open') and not restaurant.is_open:
-                raise serializers.ValidationError("This restaurant is currently closed for reservations.")
-            
-            # Check operating hours
-            if hasattr(restaurant, 'opening_time') and hasattr(restaurant, 'closing_time'):
-                opening = restaurant.opening_time
-                closing = restaurant.closing_time
-                
-                if not (opening <= reservation_time <= closing):
-                    raise serializers.ValidationError(
-                        f"Reservation time must be between {opening.strftime('%I:%M %p')} and {closing.strftime('%I:%M %p')}."
-                    )
 
-        # Only allow review if reservation is completed
-        if reservation and reservation.status not in ['Your Table Is Ready', 'completed', 'paid']:
-            raise serializers.ValidationError("You can only review a confirmed or completed reservation.")
-        # One review per reservation (only check on creation)
-        if not self.instance and reservation and Review.objects.filter(reservation=reservation).exists():
-            raise serializers.ValidationError("You have already reviewed this reservation.")
+        restaurant = data.get('restaurant')
+        reservation_date = data.get('reservation_date')
+        table_selection = data.get('table_selection', {})
+
+        if not table_selection:
+            raise serializers.ValidationError("Please select at least one table.")
+
+        total_seats = 0
+
+        for cap, count in table_selection.items():
+            cap = int(cap)
+            count = int(count)
+
+            if count <= 0:
+                continue
+
+        total_seats += cap * count
+
+        # 🔍 Check availability per type
+        qs = TableReservation.objects.filter(
+            restaurant=restaurant,
+            reservation_date=reservation_date
+        ).filter(
+            Q(payment_status='paid') | Q(status__in=['Your Table Is Ready', 'completed'])
+        ).exclude(status='cancelled')
+
+        already_booked = 0
+
+        for res in qs:
+            sel = res.table_selection or {}
+            already_booked += int(sel.get(str(cap), 0))
+
+        total_allowed = getattr(restaurant, f"tables_{cap}_capacity", 0)
+        available = total_allowed - already_booked
+
+        if count > available:
+            raise serializers.ValidationError(
+                f"Only {available} tables available for {cap}-seater."
+            )
+
+    # 🚫 LIMIT CHECK
+        if total_seats > 30:
+         raise serializers.ValidationError("You can only select up to 30 seats.")
+
+        data['total_seats'] = total_seats
+        data['number_of_guests'] = total_seats  # fallback compatibility
+
         return data
 
     def create(self, validated_data):
@@ -120,6 +148,9 @@ class TableReservationSerializer(serializers.ModelSerializer):
     has_review = serializers.SerializerMethodField()
     review_data = serializers.SerializerMethodField()
 
+    restaurant_area = serializers.CharField(source="restaurant.area", read_only=True)
+    restaurant_city = serializers.CharField(source="restaurant.city", read_only=True)
+
     payment_info = serializers.SerializerMethodField()
 
     class Meta:
@@ -127,10 +158,13 @@ class TableReservationSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'user', 'user_name', 'user_email', 'user_phone',
             'restaurant', 'restaurant_name', 'restaurant_image', 'menu_image',
+            'restaurant_area', 'restaurant_city',
             'reservation_date', 'reservation_time',
             'number_of_guests', 'table_capacity', 'tables_reserved', 'status', 'special_requests',
             'razorpay_order_id', 'payment_status',
-            'has_review', 'review_data', 'payment_info',
+            'has_review', 'review_data', 'payment_info','table_selection',
+            'total_seats',
+            'has_baby',
             'created_at'
         ]
         read_only_fields = [
@@ -168,72 +202,79 @@ class TableReservationSerializer(serializers.ModelSerializer):
             }
         return None
 
+
     def validate(self, data):
         from datetime import datetime, date as date_obj, time as time_obj, timedelta
         from django.utils import timezone
 
-        # Check reservation date and time are not in the past
+    # Check reservation date and time are not in the past
         status = data.get('status')
         res_date = data.get('reservation_date')
         res_time = data.get('reservation_time')
-        
+    
         if status != 'cancelled' and res_date and res_time:
-            # res_date is a date object, res_time is a time object
             res_datetime = timezone.make_aware(datetime.combine(res_date, res_time))
-            # Allow a 1-minute buffer for reservations made "just now"
             if res_datetime < (timezone.now() - timedelta(minutes=1)):
                 raise serializers.ValidationError("Reservation date and time cannot be in the past.")
 
-        # Operating hours check
+    # Operating hours check
         restaurant = data.get('restaurant')
         reservation_time = data.get('reservation_time')
         if restaurant and reservation_time:
             if not (restaurant.opening_time <= reservation_time <= restaurant.closing_time):
                 raise serializers.ValidationError(
-                    f"The restaurant is only open between {restaurant.opening_time.strftime('%I:%M %p')} and {restaurant.closing_time.strftime('%I:%M %p')}. Please select a valid time."
-                )
-
-        # Table availability check based on capacity
-        reservation_date = data.get('reservation_date')
-        guests = data.get('number_of_guests', 1)
-        
-        # Use provided table_capacity or derive it
-        capacity = data.get('table_capacity')
-        if not capacity:
-            if guests <= 4: capacity = 4
-            elif guests <= 6: capacity = 6
-            elif guests <= 8: capacity = 8
-            else: capacity = 10
-        
-        # Ensure guests don't exceed capacity
-        if status != 'cancelled' and guests > capacity:
-            raise serializers.ValidationError(
-                f"A {capacity}-guest table cannot accommodate {guests} guests. Please select a larger table or reduce guest count."
+                f"The restaurant is only open between {restaurant.opening_time.strftime('%I:%M %p')} and {restaurant.closing_time.strftime('%I:%M %p')}. Please select a valid time."
             )
 
-        if status != 'cancelled' and restaurant and reservation_date:
-            # Check how many tables of THIS capacity are already booked for this date
-            qs = TableReservation.objects.filter(
-                restaurant=restaurant,
-                reservation_date=reservation_date,
-                table_capacity=capacity
-            ).filter(
-                Q(payment_status='paid') | Q(status__in=['Your Table Is Ready', 'completed'])
-            ).exclude(status='cancelled')
-            if self.instance:
-                qs = qs.exclude(pk=self.instance.pk)
+    # ✅ NEW: Multi-table validation logic
+        reservation_date = data.get('reservation_date')
+        table_selection = data.get('table_selection', {})
+    
+        if table_selection and status != 'cancelled' and restaurant and reservation_date:
+            total_seats = 0
 
-            already_booked = qs.count() # Each record is 1 table now
+            for cap_str, count in table_selection.items():
+                cap = int(cap_str)
+                count = int(count)
+
+                if count <= 0:
+                    continue
+
+                total_seats += cap * count
+
+            # Check availability for THIS specific table type
+                qs = TableReservation.objects.filter(
+                    restaurant=restaurant,
+                    reservation_date=reservation_date
+                ).filter(
+                    Q(payment_status='paid') | Q(status__in=['Your Table Is Ready', 'completed'])
+                ).exclude(status='cancelled')
+            
+            # Exclude current instance if updating
+                if self.instance:
+                    qs = qs.exclude(pk=self.instance.pk)
+
+            # Count how many of THIS capacity are already booked
+                already_booked = 0
+                for res in qs:
+                    sel = res.table_selection or {}
+                    already_booked += int(sel.get(str(cap), 0))
 
             # Get total allowed for this capacity
-            field_name = f'tables_{capacity}_capacity'
-            total_allowed = getattr(restaurant, field_name, 0)
-            
-            available = total_allowed - already_booked
+                total_allowed = getattr(restaurant, f"tables_{cap}_capacity", 0)
+                available = total_allowed - already_booked
 
-            if available <= 0:
-                raise serializers.ValidationError(
-                    f"Sorry, no {capacity}-guest tables are available for this date. Please try another table type or date."
+                if count > available:
+                    raise serializers.ValidationError(
+                    f"Only {available} tables available for {cap}-seater on this date."
                 )
+
+        # Check 30-seat limit
+            if total_seats > 30:
+                raise serializers.ValidationError("You can only select up to 30 seats in total.")
+
+        # Update the total seats and guest count
+            data['total_seats'] = total_seats
+            data['number_of_guests'] = total_seats
 
         return data

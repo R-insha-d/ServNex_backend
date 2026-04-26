@@ -49,10 +49,7 @@ class GlobalSearchAPIView(APIView):
                         Q(name__icontains=search_query) |
                         Q(city__icontains=search_query) |
                         Q(area__icontains=search_query) |
-                        Q(description__icontains=search_query) |
-                        Q(amenities__icontains=search_query) |
-                        Q(badge__icontains=search_query) |
-                        Q(keywords__icontains=search_query)
+                        Q(amenities__icontains=search_query)
                     )
 
                 # Apply city filter if provided
@@ -88,7 +85,7 @@ class GlobalSearchAPIView(APIView):
                     if search_query:
                         fallback_qs = fallback_qs.filter(
                             Q(name__icontains=search_query) |
-                            Q(description__icontains=search_query)
+                            Q(amenities__icontains=search_query)
                         )
                     fallback_data = HotelListSerializer(fallback_qs, many=True, context={'request': request}).data
                     for item in fallback_data:
@@ -219,7 +216,7 @@ class SuggestionsAPIView(APIView):
                     for p in [k.strip() for k in k_str.split(',') if query.lower() in k.lower()]:
                         if p.lower() not in current_kw:
                             current_kw.add(p.lower())
-                            suggestions.append({'label': f"✨ {p}", 'value': p, 'type': 'keyword'})
+                            suggestions.append({'label': p, 'value': p, 'type': 'keyword'})
                             added_labels.add(p.lower())
                         if len(suggestions) > 10: break
                 if len(suggestions) > 10: break
@@ -232,7 +229,7 @@ class SuggestionsAPIView(APIView):
                     for p in [k.strip() for k in k_str.split(',') if query.lower() in k.lower()]:
                         if p.lower() not in current_kw:
                             current_kw.add(p.lower())
-                            suggestions.append({'label': f"✨ {p}", 'value': p, 'type': 'keyword'})
+                            suggestions.append({'label': p, 'value': p, 'type': 'keyword'})
                             added_labels.add(p.lower())
                         if len(suggestions) > 20: break
                 if len(suggestions) > 20: break
@@ -290,7 +287,7 @@ class SuggestionsAPIView(APIView):
             
             for c in set(all_cities):
                 if c.lower() not in added_labels:
-                    suggestions.append({'label': f"📍 {c}", 'value': c, 'type': 'city'})
+                    suggestions.append({'label': c, 'value': c, 'type': 'city'})
                     added_labels.add(c.lower())
                     if len(suggestions) > 50: break
 
@@ -299,8 +296,20 @@ class SuggestionsAPIView(APIView):
             cuisines = RestaurantDataModel.objects.filter(cuisine_type__icontains=query).values_list('cuisine_type', flat=True).distinct()[:3]
             for cui in cuisines:
                 if cui.lower() not in added_labels:
-                    suggestions.append({'label': f"🍽️ {cui}", 'value': cui, 'type': 'cuisine'})
+                    suggestions.append({'label': cui, 'value': cui, 'type': 'cuisine'})
                     added_labels.add(cui.lower())
                     if len(suggestions) > 55: break
+
+        # 5. Amenities
+        if search_type in ['all', 'hotel']:
+            amenities_qs = HotelDataModel.objects.filter(amenities__icontains=query).values_list('amenities', flat=True).distinct()
+            for am_str in amenities_qs:
+                if am_str:
+                    for am in [a.strip() for a in am_str.split(',') if query.lower() in a.lower()]:
+                        if am.lower() not in added_labels:
+                            suggestions.append({'label': am, 'value': am, 'type': 'amenity'})
+                            added_labels.add(am.lower())
+                            if len(suggestions) > 35: break
+                if len(suggestions) > 35: break
 
         return Response(suggestions, status=status.HTTP_200_OK)

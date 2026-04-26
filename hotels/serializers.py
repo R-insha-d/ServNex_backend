@@ -119,7 +119,7 @@ class BookingSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Booking
-        fields = ['id', 'hotel', 'hotel_details', 'check_in', 'check_out', 'status', 'number_of_guests', 'rooms_booked', 'room', 'room_type', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data', 'total_original_price', 'discount_amount', 'final_price', 'coupon_code', 'discount_reason', 'created_at']
+        fields = ['id', 'hotel', 'hotel_details', 'check_in', 'check_out', 'status', 'number_of_guests', 'number_of_children', 'rooms_booked', 'room', 'room_type', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data', 'total_original_price', 'discount_amount', 'final_price', 'coupon_code', 'discount_reason', 'guest_name', 'guest_phone', 'created_at']
         read_only_fields = ['user', 'status', 'room_type', 'room_type_name', 'razorpay_order_id', 'payment_status', 'has_review', 'review_data', 'total_original_price', 'discount_amount', 'final_price', 'discount_reason', 'created_at']
 
     coupon_code = serializers.CharField(write_only=True, required=False, allow_blank=True)
@@ -148,6 +148,7 @@ class BookingSerializer(serializers.ModelSerializer):
         check_in = data['check_in']
         check_out = data['check_out']
         number_of_guests = data.get('number_of_guests', 2)
+        number_of_children = data.get('number_of_children', 0)
 
         if check_in >= check_out:
             raise serializers.ValidationError("Check-out date must be after check-in.")
@@ -156,15 +157,26 @@ class BookingSerializer(serializers.ModelSerializer):
         if check_in < timezone.localtime().date():
             raise serializers.ValidationError("Check-in date cannot be in the past.")
 
-        # 1. Calculate rooms needed for THIS booking (1 room per 2 guests)
-        # Use provided 'rooms_booked' or calculate minimum from guests (1 room per 2 guests)
+        # 2. Room check
+        room = data.get('room')
+
+        # 1. Calculate rooms needed for THIS booking
+        # Use provided 'rooms_booked' or calculate minimum from guests
         requested_rooms = data.get('rooms_booked')
         import math
-        min_rooms = math.ceil(number_of_guests / 2)
+        capacity = room.adults if room else 2
+        min_rooms = math.ceil(number_of_guests / capacity)
 
         if not requested_rooms or requested_rooms < min_rooms:
             requested_rooms = min_rooms
             data['rooms_booked'] = requested_rooms # Ensure it's saved correctly
+            
+        if room:
+            max_children_allowed = room.children * requested_rooms
+            if number_of_children > max_children_allowed:
+                raise serializers.ValidationError(
+                    f"This room type only allows {room.children} children per room. You requested {number_of_children} children for {requested_rooms} rooms."
+                )
 
         # 2. Room check
         room = data.get('room')

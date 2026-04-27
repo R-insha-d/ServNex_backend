@@ -24,6 +24,7 @@ urlpatterns = [
     path('',include('users.urls')),
     path('api/',include('hotels.urls')),
     path('api/', include('restaurants.urls')),
+    path('api/', include('salons.urls')),
     path('', include('search.urls')),
     path('api/',include('payments.urls')),
     path('api/notifications/', include('notifications.urls')),

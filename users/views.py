@@ -275,6 +275,7 @@ class UpdateRoleView(APIView):
 
 from hotels.models import HotelDataModel
 from restaurants.models import RestaurantDataModel
+from salons.models import SalonDataModel
 
 class BusinessProfileView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -302,6 +303,16 @@ class BusinessProfileView(APIView):
                 description=data.get('description'),
             )
             return Response({"message": "Restaurant profile created", "id": restaurant.id}, status=status.HTTP_201_CREATED)
+            
+        elif user.role == 'Saloon':
+            salon = SalonDataModel.objects.create(
+                owner=user,
+                name=data.get('name'),
+                city=data.get('city'),
+                area=data.get('area'),
+                description=data.get('description'),
+            )
+            return Response({"message": "Salon profile created", "id": salon.id}, status=status.HTTP_201_CREATED)
             
         else:
             return Response({"error": "Invalid role for business profile"}, status=status.HTTP_400_BAD_REQUEST)

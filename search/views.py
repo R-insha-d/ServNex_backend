@@ -6,6 +6,8 @@ from hotels.models import HotelDataModel
 from restaurants.models import RestaurantDataModel
 from hotels.serializers import HotelListSerializer
 from restaurants.serializers import RestaurantSerializer
+from salons.models import SalonDataModel
+from salons.serializers import SalonListSerializer
 from .utils import haversine_distance
 
 # Maximum radius (km) used when filtering by detected location
@@ -30,7 +32,7 @@ class GlobalSearchAPIView(APIView):
 
             # Basic NL processing: Strip 'near', 'nearby', 'around', 'me'
             processed_query = query.lower()
-            nl_keywords = ['near', 'nearby', 'around', ' me', 'hotels', 'hotel', 'restaurants', 'restaurant']
+            nl_keywords = ['near', 'nearby', 'around', ' me', 'hotels', 'hotel', 'restaurants', 'restaurant', 'salons', 'salon']
             for kw in nl_keywords:
                 processed_query = processed_query.replace(kw, '').strip()
 
@@ -131,7 +133,45 @@ class GlobalSearchAPIView(APIView):
                     else:
                         results.append(item)
 
-            # ── 3. Sort by distance (closest first) when location is active ───
+            # ── 3. Search Salons ──────────────────────────────────────────────
+            if search_type in ['all', 'salon']:
+                salon_qs = SalonDataModel.objects.all()
+
+                if search_query:
+                    salon_qs = salon_qs.filter(
+                        Q(name__icontains=search_query) |
+                        Q(city__icontains=search_query) |
+                        Q(area__icontains=search_query) |
+                        Q(description__icontains=search_query) |
+                        Q(amenities__icontains=search_query) |
+                        Q(badge__icontains=search_query) |
+                        Q(keywords__icontains=search_query) |
+                        Q(services__name__icontains=search_query)
+                    ).distinct()
+
+                if city_param and city_param.lower() != "all" and city_param != "Current Location":
+                    salon_qs = salon_qs.filter(city__iexact=city_param)
+
+                salon_data = SalonListSerializer(salon_qs, many=True, context={'request': request}).data
+
+                for item in salon_data:
+                    item['result_type'] = 'salon'
+                    item['distance'] = None
+
+                    if lat is not None and lng is not None and item.get('id'):
+                        try:
+                            salon_obj = SalonDataModel.objects.get(id=item['id'])
+                            if salon_obj.latitude is not None and salon_obj.longitude is not None:
+                                dist = haversine_distance(lat, lng, salon_obj.latitude, salon_obj.longitude)
+                                item['distance'] = dist
+                                if dist <= MAX_DISTANCE_KM:
+                                    results.append(item)
+                        except Exception:
+                            pass
+                    else:
+                        results.append(item)
+
+            # ── 4. Sort by distance (closest first) when location is active ───
             if lat is not None and lng is not None:
                 results.sort(key=lambda x: x.get('distance') if x.get('distance') is not None else float('inf'))
 
@@ -157,7 +197,7 @@ class SuggestionsAPIView(APIView):
 
         # Basic NL processing
         search_query = query.lower()
-        for kw in ['near ', 'nearby ', 'around ', ' me', 'hotels', 'hotel', 'restaurants', 'restaurant']:
+        for kw in ['near ', 'nearby ', 'around ', ' me', 'hotels', 'hotel', 'restaurants', 'restaurant', 'salons', 'salon']:
             search_query = search_query.replace(kw, '').strip()
         
         query = search_query if len(search_query) >= 2 else query
@@ -194,6 +234,20 @@ class SuggestionsAPIView(APIView):
                         if len(suggestions) > 20: break
                 if len(suggestions) > 20: break
 
+        # Salon Keywords
+        if search_type in ['all', 'salon']:
+            from salons.models import SalonDataModel
+            s_kw = SalonDataModel.objects.filter(keywords__icontains=query).values_list('keywords', flat=True).distinct()
+            for k_str in s_kw:
+                if k_str:
+                    for p in [k.strip() for k in k_str.split(',') if query.lower() in k.lower()]:
+                        if p.lower() not in current_kw:
+                            current_kw.add(p.lower())
+                            suggestions.append({'label': f"✨ {p}", 'value': p, 'type': 'keyword'})
+                            added_labels.add(p.lower())
+                        if len(suggestions) > 30: break
+                if len(suggestions) > 30: break
+
         # 2. Names
         if search_type in ['all', 'hotel']:
             hotels = HotelDataModel.objects.filter(name__icontains=query)[:5]
@@ -201,7 +255,7 @@ class SuggestionsAPIView(APIView):
                 if h.name.lower() not in added_labels:
                     suggestions.append({'label': h.name, 'value': h.name, 'type': 'hotel'})
                     added_labels.add(h.name.lower())
-                    if len(suggestions) > 25: break
+                    if len(suggestions) > 35: break
 
         if search_type in ['all', 'restaurant']:
             restaurants = RestaurantDataModel.objects.filter(name__icontains=query)[:5]
@@ -209,15 +263,33 @@ class SuggestionsAPIView(APIView):
                 if r.name.lower() not in added_labels:
                     suggestions.append({'label': r.name, 'value': r.name, 'type': 'restaurant'})
                     added_labels.add(r.name.lower())
-                    if len(suggestions) > 30: break
+                    if len(suggestions) > 40: break
+
+        if search_type in ['all', 'salon']:
+            from salons.models import SalonDataModel
+            saloons = SalonDataModel.objects.filter(name__icontains=query)[:5]
+            for s in saloons:
+                if s.name.lower() not in added_labels:
+                    suggestions.append({'label': s.name, 'value': s.name, 'type': 'salon'})
+                    added_labels.add(s.name.lower())
+                    if len(suggestions) > 45: break
 
         # 3. Cities
-        if search_type in ['all', 'hotel']:
-            cities = HotelDataModel.objects.filter(city__icontains=query).values_list('city', flat=True).distinct()[:3]
-            for c in cities:
+        if search_type in ['all', 'hotel', 'restaurant', 'salon']:
+            all_cities = []
+            if search_type in ['all', 'hotel']:
+                all_cities.extend(HotelDataModel.objects.filter(city__icontains=query).values_list('city', flat=True).distinct())
+            if search_type in ['all', 'restaurant']:
+                all_cities.extend(RestaurantDataModel.objects.filter(city__icontains=query).values_list('city', flat=True).distinct())
+            if search_type in ['all', 'salon']:
+                from salons.models import SalonDataModel
+                all_cities.extend(SalonDataModel.objects.filter(city__icontains=query).values_list('city', flat=True).distinct())
+            
+            for c in set(all_cities):
                 if c.lower() not in added_labels:
                     suggestions.append({'label': c, 'value': c, 'type': 'city'})
                     added_labels.add(c.lower())
+                    if len(suggestions) > 50: break
 
         # 4. Cuisine Types
         if search_type in ['all', 'restaurant']:
@@ -226,6 +298,7 @@ class SuggestionsAPIView(APIView):
                 if cui.lower() not in added_labels:
                     suggestions.append({'label': cui, 'value': cui, 'type': 'cuisine'})
                     added_labels.add(cui.lower())
+                    if len(suggestions) > 55: break
 
         # 5. Amenities
         if search_type in ['all', 'hotel']:

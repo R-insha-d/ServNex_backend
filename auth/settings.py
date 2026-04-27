@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     'users',
     'hotels',
     'restaurants',
+    'salons',
     'payments',
     'search',
     'notifications',

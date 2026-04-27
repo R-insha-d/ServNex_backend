@@ -64,7 +64,7 @@ class SalonListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'city', 'area', 'badge', 'image', 
             'rating', 'service_type', 'all_services', 'average_rating', 'reviews_count',
-            'amenities', 'latitude', 'longitude'
+            'amenities', 'latitude', 'longitude', 'is_open', 'opening_time', 'closing_time'
         ]
 
     def get_service_type(self, obj):
@@ -128,6 +128,8 @@ class SalonQueueEntrySerializer(serializers.ModelSerializer):
     salon_area = serializers.CharField(source='salon.area', read_only=True)
     salon_city = serializers.CharField(source='salon.city', read_only=True)
     service_name = serializers.CharField(source='service.name', read_only=True)
+    services_list = SalonServiceSerializer(source='services', many=True, read_only=True)
+    service_names = serializers.SerializerMethodField()
     created_at = serializers.DateTimeField(source='joined_at', read_only=True)
     has_review = serializers.SerializerMethodField()
     review_data = serializers.SerializerMethodField()
@@ -137,11 +139,17 @@ class SalonQueueEntrySerializer(serializers.ModelSerializer):
             return obj.user.get_full_name() or obj.user.username
         return obj.guest_name or "Guest Customer"
 
+    def get_service_names(self, obj):
+        # Fallback to single service if services list is empty
+        if obj.services.exists():
+            return ", ".join([s.name for s in obj.services.all()])
+        return obj.service.name if obj.service else "Multiple Services"
+
     class Meta:
         model = SalonQueueEntry
         fields = [
             'id', 'user', 'user_name', 'user_phone', 'salon', 'salon_name', 'salon_image',
-            'salon_area', 'salon_city', 'service', 'service_name', 
+            'salon_area', 'salon_city', 'service', 'service_name', 'services', 'services_list', 'service_names',
             'status', 'joined_at', 'created_at', 'estimated_wait_time', 
             'guest_name', 'guest_phone',
             'has_review', 'review_data'

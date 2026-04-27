@@ -70,9 +70,11 @@ class SalonQueueEntry(models.Model):
     guest_name = models.CharField(max_length=255, null=True, blank=True)
     guest_phone = models.CharField(max_length=20, null=True, blank=True)
     salon = models.ForeignKey(SalonDataModel, on_delete=models.CASCADE, related_name='queue_entries')
-    service = models.ForeignKey(SalonService, on_delete=models.CASCADE)
+    service = models.ForeignKey(SalonService, on_delete=models.CASCADE, null=True, blank=True)
+    services = models.ManyToManyField(SalonService, related_name='queue_entries_multi')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     joined_at = models.DateTimeField(auto_now_add=True)
+    service_started_at = models.DateTimeField(null=True, blank=True)
     estimated_wait_time = models.PositiveIntegerField(default=0, help_text="Estimated wait time in minutes")
 
     class Meta:

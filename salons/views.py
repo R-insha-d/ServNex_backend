@@ -69,96 +69,153 @@ class SalonViewSet(viewsets.ModelViewSet):
         
         estimated_wait = 0
         
+        # Helper to get duration of an entry (sum of all services)
+        def get_entry_duration(entry):
+            total_d = 0
+            # Check M2M services first
+            services = entry.services.all()
+            if services.exists():
+                for s in services:
+                    try:
+                        total_d += int(''.join(filter(str.isdigit, s.duration or "20")))
+                    except:
+                        total_d += 20
+            elif entry.service:
+                try:
+                    total_d = int(''.join(filter(str.isdigit, entry.service.duration or "20")))
+                except:
+                    total_d = 20
+            else:
+                total_d = 20
+            return total_d
+
+        now = timezone.now()
+        
         # Calculate wait time from pending people
         for entry in pending_entries:
-            try:
-                # Extract numbers from duration string (e.g., "30 mins" -> 30)
-                duration = int(''.join(filter(str.isdigit, entry.service.duration or "20")))
-                estimated_wait += duration
-            except ValueError:
-                estimated_wait += 20 # Default fallback
+            estimated_wait += get_entry_duration(entry)
                 
-        # Calculate wait time from people currently in service (assume half time left)
+        # Calculate wait time from people currently in service
         for entry in in_service_entries:
-            try:
-                duration = int(''.join(filter(str.isdigit, entry.service.duration or "20")))
-                estimated_wait += (duration // 2) 
-            except ValueError:
-                estimated_wait += 10 # Default fallback
+            total_d = get_entry_duration(entry)
+            if entry.service_started_at:
+                elapsed = (now - entry.service_started_at).total_seconds() / 60
+                remaining = max(0, total_d - elapsed)
+                estimated_wait += remaining
+            else:
+                estimated_wait += (total_d // 2)
         
         return Response({
             "current_queue_length": pending_entries.count(),
-            "estimated_wait_time": estimated_wait
+            "estimated_wait_time": int(estimated_wait)
         })
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated], url_path='join-queue')
     def join_queue(self, request, pk=None):
-        """Allows a user to join the virtual queue for a specific service"""
+        """Allows a user to join the virtual queue for one or more services"""
         salon = self.get_object()
-        service_id = request.data.get('service_id')
-        service_name = request.data.get('service') # Frontend might send service name
+        service_ids = request.data.get('service_ids', [])
+        service_id = request.data.get('service_id') # Backward compatibility
+        service_name = request.data.get('service') # Backward compatibility (name)
 
-        if service_id:
+        selected_services = []
+
+        if service_ids:
+            if isinstance(service_ids, str):
+                import json
+                try:
+                    service_ids = json.loads(service_ids)
+                except:
+                    service_ids = [s.strip() for s in service_ids.split(',') if s.strip()]
+            
+            selected_services = SalonService.objects.filter(id__in=service_ids, salon=salon)
+        elif service_id:
             try:
-                service = SalonService.objects.get(id=service_id, salon=salon)
-            except (SalonService.DoesNotExist, ValueError):
-                return Response({"error": "Invalid service ID"}, status=status.HTTP_400_BAD_REQUEST)
+                s = SalonService.objects.get(id=service_id, salon=salon)
+                selected_services = [s]
+            except:
+                pass
         elif service_name:
-            service = SalonService.objects.filter(salon=salon, name=service_name).first()
-            if not service:
-                return Response({"error": f"Service '{service_name}' not found"}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            return Response({"error": "Please select a service"}, status=status.HTTP_400_BAD_REQUEST)
+            s = SalonService.objects.filter(salon=salon, name=service_name).first()
+            if s:
+                selected_services = [s]
+
+        if not selected_services:
+            return Response({"error": "Please select at least one service"}, status=status.HTTP_400_BAD_REQUEST)
 
         # ── Operating Hours & Workload Check ──
-        # Skip check if the requester is the salon owner (manual entry)
         is_owner = salon.owner == request.user
         if not is_owner:
             now = timezone.now()
             
             # Check if salon is currently open
-            current_time = now.time()
+            if not salon.is_open:
+                return Response({"error": "Salon is currently closed."}, status=status.HTTP_400_BAD_REQUEST)
+
+            current_time = timezone.localtime(now).time()
             if salon.opening_time and salon.closing_time:
                 if current_time < salon.opening_time or current_time > salon.closing_time:
                     return Response({"error": "Salon is currently closed."}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Calculate total workload (current queue + new service + buffer)
+            # Calculate total workload
             active_entries = SalonQueueEntry.objects.filter(salon=salon, status__in=['pending', 'in_progress'])
             total_workload_mins = 0
             
+            def get_entry_duration(entry):
+                total_d = 0
+                services = entry.services.all()
+                if services.exists():
+                    for s in services:
+                        try:
+                            total_d += int(''.join(filter(str.isdigit, s.duration or "30")))
+                        except:
+                            total_d += 30
+                elif entry.service:
+                    try:
+                        total_d = int(''.join(filter(str.isdigit, entry.service.duration or "30")))
+                    except:
+                        total_d = 30
+                else:
+                    total_d = 30
+                return total_d
+
             for entry in active_entries:
+                total_d = get_entry_duration(entry)
+                if entry.status == 'in_progress' and entry.service_started_at:
+                    elapsed = (now - entry.service_started_at).total_seconds() / 60
+                    remaining = max(0, total_d - elapsed)
+                    total_workload_mins += remaining
+                elif entry.status == 'in_progress':
+                    total_workload_mins += (total_d // 2)
+                else:
+                    total_workload_mins += total_d
+            
+            # Save this accurate wait time for the user's ticket before adding their own duration
+            estimated_wait_time_for_user = int(total_workload_mins)
+
+            # Add requested services duration
+            for s in selected_services:
                 try:
-                    # Extract numeric duration
-                    d = int(''.join(filter(str.isdigit, entry.service.duration or "30")))
-                    total_workload_mins += d
+                    total_workload_mins += int(''.join(filter(str.isdigit, s.duration or "30")))
                 except:
                     total_workload_mins += 30
-            
-            # Add requested service duration
-            try:
-                new_service_duration = int(''.join(filter(str.isdigit, service.duration or "30")))
-                total_workload_mins += new_service_duration
-            except:
-                total_workload_mins += 30
                 
-            # Add buffer time (e.g., 15 mins)
             buffer_mins = 15
             total_workload_mins += buffer_mins
             
-            # Calculate projected finish time
             projected_finish_dt = now + timedelta(minutes=total_workload_mins)
             closing_dt = timezone.make_aware(datetime.combine(now.date(), salon.closing_time))
             
             if projected_finish_dt > closing_dt:
                 return Response({
-                    "error": f"Cannot accommodate this service today. Estimated completion time ({projected_finish_dt.strftime('%H:%M')}) exceeds salon closing time ({salon.closing_time.strftime('%H:%M')}).",
+                    "error": f"Cannot accommodate these services today. Estimated completion ({projected_finish_dt.strftime('%H:%M')}) exceeds closing time ({salon.closing_time.strftime('%H:%M')}).",
                     "details": {
                         "estimated_completion": projected_finish_dt.strftime('%H:%M'),
                         "closing_time": salon.closing_time.strftime('%H:%M')
                     }
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Check for existing active queue entry (Only for regular users)
+        # Check for existing active queue entry
         if not is_owner:
             if SalonQueueEntry.objects.filter(user=request.user, salon=salon, status__in=['pending', 'in_progress']).exists():
                 return Response({"error": "You are already in the queue for this salon"}, status=status.HTTP_400_BAD_REQUEST)
@@ -167,25 +224,71 @@ class SalonViewSet(viewsets.ModelViewSet):
         guest_name = request.data.get('guest_name')
         guest_phone = request.data.get('guest_phone')
 
-        entry = SalonQueueEntry.objects.create(
-            user=None if is_owner and guest_name else request.user,
-            guest_name=guest_name if is_owner else None,
-            guest_phone=guest_phone if is_owner else None,
-            salon=salon,
-            service=service,
-            status='pending'
-        )
+        with transaction.atomic():
+            entry = SalonQueueEntry.objects.create(
+                user=None if is_owner and guest_name else request.user,
+                guest_name=guest_name if is_owner else None,
+                guest_phone=guest_phone if is_owner else None,
+                salon=salon,
+                service=selected_services[0] if len(selected_services) == 1 else None, # Legacy support
+                status='pending',
+                estimated_wait_time=estimated_wait_time_for_user if not is_owner else 0
+            )
+            entry.services.set(selected_services)
 
-        # Notify user about joining the queue (Only for registered users)
+        # Notify user
         if entry.user:
+            s_names = ", ".join([s.name for s in selected_services])
             Notification.objects.create(
                 user=entry.user,
                 title="Joined Queue",
-                message=f"You've successfully joined the queue at {salon.name} for {service.name}.",
+                message=f"You've successfully joined the queue at {salon.name} for {s_names}.",
                 notification_type='booking',
                 link='/my-bookings'
             )
         return Response(SalonQueueEntrySerializer(entry).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def dashboard_stats(self, request):
+        """Returns statistics for the salon dashboard"""
+        salon = SalonDataModel.objects.filter(owner=request.user).first()
+        if not salon:
+            return Response({"error": "No salon found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        now = timezone.now()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # Basic counts
+        active_queue = SalonQueueEntry.objects.filter(salon=salon, status__in=['pending', 'in_progress']).count()
+        today_completed = SalonQueueEntry.objects.filter(salon=salon, status='completed', joined_at__gte=today_start).count()
+        total_bookings = SalonQueueEntry.objects.filter(salon=salon).count()
+        
+        # Revenue (Today)
+        # Note: This is a simple sum of service prices for completed entries today
+        today_completed_entries = SalonQueueEntry.objects.filter(salon=salon, status='completed', joined_at__gte=today_start)
+        today_revenue = 0
+        for entry in today_completed_entries:
+            if entry.services.exists():
+                for s in entry.services.all():
+                    today_revenue += s.price
+            elif entry.service:
+                today_revenue += entry.service.price
+        
+        # Reviews
+        from django.db.models import Avg
+        avg_rating = salon.reviews.aggregate(Avg('rating'))['rating__avg'] or float(salon.rating or 0.0)
+        total_reviews = salon.reviews.count()
+        
+        return Response({
+            "active_queue": active_queue,
+            "today_completed": today_completed,
+            "total_bookings": total_bookings,
+            "today_revenue": float(today_revenue),
+            "average_rating": round(float(avg_rating), 1),
+            "total_reviews": total_reviews,
+            "salon_name": salon.name,
+            "is_open": salon.is_open
+        })
 
 class SalonServiceViewSet(viewsets.ModelViewSet):
     queryset = SalonService.objects.all()
@@ -244,6 +347,9 @@ class SalonQueueEntryViewSet(viewsets.ModelViewSet):
         
         # 1. Notify the current user if they are being served
         if instance.status == 'in_progress' and old_status != 'in_progress':
+            instance.service_started_at = timezone.now()
+            instance.save()
+            
             Notification.objects.create(
                 user=instance.user,
                 title="Your turn is here!",
@@ -340,6 +446,20 @@ class SalonDashboardRecordsView(APIView):
 class ReviewViewSet(viewsets.ModelViewSet):
     queryset = Review.objects.all()
     serializer_class = ReviewSerializer
+
+    def get_queryset(self):
+        queryset = Review.objects.all().order_by('-created_at')
+        salon_id = self.request.query_params.get('salon')
+        is_mine = self.request.query_params.get('mine')
+
+        if salon_id:
+            queryset = queryset.filter(salon_id=salon_id)
+        
+        if is_mine == 'true' and self.request.user.is_authenticated:
+            # Filter reviews for salons owned by the current user
+            queryset = queryset.filter(salon__owner=self.request.user)
+            
+        return queryset
 
     def get_permissions(self):
         if self.action == 'create':

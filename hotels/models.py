@@ -9,6 +9,8 @@ class HotelDataModel(models.Model):
         ('Luxury Stays', 'Luxury Stays'),
         ('Cheap & Best', 'Cheap & Best'),
         ('Dormitory', 'Dormitory'),
+        ('Beach Resort', 'Beach Resort'),
+        ('Eco Stay', 'Eco Stay'),
     ]
 
     owner = models.ForeignKey(
